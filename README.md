@@ -36,6 +36,43 @@ Streamlit calls FastAPI, which creates a persisted job and runs the orchestrator
 
 `docker compose up --build` starts API, Streamlit, and Redis. For OCI ARM64, use the same compose file on an Ampere VM, front it with Nginx, and use Autonomous Database and Object Storage credentials through environment variables. Never commit `.env`.
 
+### Oracle Cloud VM: Git-based updates
+
+Keep the application checkout on the VM as a Git clone. This makes releases
+repeatable and avoids copying individual source files to the server.
+
+One-time setup, from `/home/opc/code/ppt_builder` on the VM:
+
+```bash
+git remote -v
+git branch --show-current
+sudo systemctl enable --now slideweaver-api slideweaver-ui
+```
+
+For each release, push the committed change from your development machine,
+then update the VM checkout and restart the two services:
+
+```bash
+cd /home/opc/code/ppt_builder
+git pull --ff-only origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart slideweaver-api slideweaver-ui
+sudo systemctl status slideweaver-api slideweaver-ui --no-pager
+```
+
+Replace `main` with the branch configured on the server if it differs. Do not
+put API keys in Git: the VM's `.env` stays local to the server. If a release
+changes only Python source files, the dependency-install command is harmless;
+it is included so the same release procedure also handles future dependency
+changes.
+
+With the **Auto** theme, DeckForge selects a topic-appropriate design system:
+security and SOC decks use *Security Signal*, investment/depository decks use
+*Investor Slate*, and AI/platform decks use *Aurora Tech*. The Storyline Agent
+also uses topic-specific story arcs, so decks on unrelated subjects do not
+default to the same cover → comparison → summary pattern.
+
 ## Generated-file retention
 
 `FILE_RETENTION_HOURS` controls how long generated PPTX files and image assets remain available after a successful generation or edit. The development default is `1`; set it to `48` for a two-day production lifetime. The Celery Beat service runs cleanup every ten minutes. Expired files are deleted from storage, downloads return HTTP 410, and editing/regenerating a presentation starts a fresh retention window.
