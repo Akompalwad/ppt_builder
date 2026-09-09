@@ -1,0 +1,11 @@
+{
+  "outputSlides": [
+    {"outputSlide":1,"sourceSlide":1,"narrativeRole":"opening","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":2,"sourceSlide":2,"narrativeRole":"advantages","reuseMode":"duplicate-slide","editTargets":[{"shapeId":"sh/ozy1ofad","action":"rewrite-and-reposition"}]},
+    {"outputSlide":3,"sourceSlide":3,"narrativeRole":"comparison","reuseMode":"duplicate-slide","editTargets":[{"shapeId":"sh/d0jax03i","action":"rewrite-and-reposition"}]},
+    {"outputSlide":4,"sourceSlide":4,"narrativeRole":"cost and time evidence","reuseMode":"duplicate-slide","editTargets":[{"shapeId":"sh/0ba143al","action":"rewrite-and-reposition"}]},
+    {"outputSlide":5,"sourceSlide":5,"narrativeRole":"case study","reuseMode":"duplicate-slide","editTargets":[{"shapeId":"sh/cf2tcr61","action":"rewrite-and-reposition"}]},
+    {"outputSlide":6,"sourceSlide":6,"narrativeRole":"recommendation","reuseMode":"duplicate-slide","editTargets":[{"shapeId":"sh/zi98nu94","action":"rewrite-and-reposition"}]}
+  ],
+  "omittedSourceSlides": []
+}

@@ -1,0 +1,18 @@
+{
+  "status": "fail",
+  "checkedAt": "2026-09-06T17:34:28.161Z",
+  "workspace": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube",
+  "mapPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-frame-map.json",
+  "inspectPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/template-inspect.ndjson",
+  "sourceSlideCount": 6,
+  "issueCount": 1,
+  "issues": [
+    {
+      "severity": "fail",
+      "id": "preserve-only-content-role",
+      "message": "editTargets: [] means preserve-only, but narrativeRole \"model comparison\" appears content-bearing.",
+      "outputSlide": 2,
+      "sourceSlide": 2
+    }
+  ]
+}

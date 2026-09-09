@@ -1,0 +1,47 @@
+set -a
+source .env
+set +a
+echo ${#GEMINI_API_KEY}
+
+
+
+Curl -s https://integrate.api.nvidia.com/v1/chat/completions \
+  -H "Authorization: Bearer $NVIDIA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "nvidia/nemotron-3-super-120b-a12b",
+    "messages": [{"role": "user", "content": "Reply only: OK"}],
+    "max_tokens": 10
+  }'
+
+
+Curl -s https://integrate.api.nvidia.com/v1/chat/completions \
+  -H "Authorization: Bearer $NVIDIA_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openai/gpt-oss-120b",
+    "messages": [{"role": "user", "content": "Reply only: OK"}],
+    "max_tokens": 10
+  }'
+  
+
+
+  curl -s "http://localhost:8000/api/llm/status?provider=nvidia"
+
+
+
+curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b-it:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{
+      "parts": [{
+        "text": "Return only valid JSON: {\"status\":\"Gemma API works\"}"
+      }]
+    }],
+    "generationConfig": {
+      "temperature": 0,
+      "maxOutputTokens": 50,
+      "responseMimeType": "application/json"
+    }
+  }'

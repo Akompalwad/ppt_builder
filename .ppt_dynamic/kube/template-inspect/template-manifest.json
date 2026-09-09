@@ -1,0 +1,132 @@
+{
+  "sourcePptx": "/Users/ajay/Documents/Kubernetes vs Monolithic Architecture.pptx",
+  "workspace": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube",
+  "outDir": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect",
+  "generatedAt": "2026-09-06T17:31:21.900Z",
+  "slideCount": 6,
+  "slideArtifacts": [
+    {
+      "slide": 1,
+      "previewPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/source-slides/source-slide-01.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-01.png",
+      "layoutPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/layouts/source-slide-01.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-01.layout.json"
+    },
+    {
+      "slide": 2,
+      "previewPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/source-slides/source-slide-02.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-02.png",
+      "layoutPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/layouts/source-slide-02.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-02.layout.json"
+    },
+    {
+      "slide": 3,
+      "previewPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/source-slides/source-slide-03.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-03.png",
+      "layoutPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/layouts/source-slide-03.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-03.layout.json"
+    },
+    {
+      "slide": 4,
+      "previewPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/source-slides/source-slide-04.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-04.png",
+      "layoutPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/layouts/source-slide-04.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-04.layout.json"
+    },
+    {
+      "slide": 5,
+      "previewPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/source-slides/source-slide-05.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-05.png",
+      "layoutPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/layouts/source-slide-05.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-05.layout.json"
+    },
+    {
+      "slide": 6,
+      "previewPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/source-slides/source-slide-06.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-06.png",
+      "layoutPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/layouts/source-slide-06.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-06.layout.json"
+    }
+  ],
+  "inspectPath": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/template-inspect.ndjson",
+  "inspectRelativePath": "template-inspect/template-inspect.ndjson",
+  "inspectTruncated": true,
+  "inspectMetadata": {
+    "revision": "zd01gr",
+    "target": {
+      "id": "pr/luuvu4"
+    },
+    "kind": {
+      "requested": "slide,textbox,shape,image,table,chart",
+      "tokens": [
+        "slide",
+        "textbox",
+        "shape",
+        "image",
+        "table",
+        "chart"
+      ]
+    },
+    "include": {
+      "tokens": []
+    },
+    "exclude": {
+      "tokens": []
+    },
+    "notices": []
+  },
+  "extractedMedia": [
+    {
+      "entry": "ppt/media/image1.jpg",
+      "path": "/Volumes/ssd_ajay/code/ppt_builder/.ppt_dynamic/kube/template-inspect/assets/ppt/media/image1.jpg",
+      "relativePath": "template-inspect/assets/ppt/media/image1.jpg",
+      "bytes": 85382
+    }
+  ],
+  "fonts": [
+    "+mj-cs",
+    "+mj-ea",
+    "+mj-lt",
+    "+mn-cs",
+    "+mn-ea",
+    "+mn-lt",
+    "Angsana New",
+    "Arial",
+    "Calibri",
+    "Cordia New",
+    "DaunPenh",
+    "DokChampa",
+    "Estrangelo Edessa",
+    "Euphemia",
+    "Gautami",
+    "Iskoola Pota",
+    "Kalinga",
+    "Kartika",
+    "Latha",
+    "MV Boli",
+    "Mangal",
+    "Microsoft Himalaya",
+    "Microsoft Uighur",
+    "Microsoft Yi Baiti",
+    "Mongolian Baiti",
+    "MoolBoran",
+    "Nyala",
+    "Plantagenet Cherokee",
+    "Raavi",
+    "Shruti",
+    "Sylfaen",
+    "Times New Roman",
+    "Tunga",
+    "Vrinda",
+    "宋体",
+    "新細明體",
+    "맑은 고딕",
+    "ＭＳ Ｐゴシック"
+  ],
+  "packageParts": {
+    "mediaCount": 1,
+    "slideXmlCount": 6,
+    "chartCount": 0,
+    "tableSlideCount": 0
+  }
+}

@@ -1,0 +1,2 @@
+Template plan check: fail
+FAIL preserve-only-content-role: editTargets: [] means preserve-only, but narrativeRole "model comparison" appears content-bearing. outputSlide=2 sourceSlide=2

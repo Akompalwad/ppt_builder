@@ -1,0 +1,1 @@
+Slides retain inherited elements and source visual language. Positions and fills will be adjusted only within existing slide elements to reduce the repeated card-grid cadence.
