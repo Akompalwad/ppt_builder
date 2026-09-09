@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
@@ -17,6 +18,17 @@ class PresentationVersion(Base):
 class GenerationJob(Base):
     __tablename__="generation_jobs"; id: Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid4())); presentation_id: Mapped[str]=mapped_column(ForeignKey("presentations.id")); job_type: Mapped[str]=mapped_column(String(30),default="generate"); status: Mapped[str]=mapped_column(String(40),default="QUEUED"); progress: Mapped[int]=mapped_column(Integer,default=0); current_stage: Mapped[str]=mapped_column(String(50),default="QUEUED"); error_message: Mapped[str|None]=mapped_column(String(2000),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 
-engine=create_engine(get_settings().database_url, connect_args={"check_same_thread":False} if get_settings().database_url.startswith("sqlite") else {})
+settings = get_settings()
+
+# A fresh local deployment has no ignored ``storage/`` directory yet.  Create
+# the SQLite parent and generated-file root before SQLAlchemy opens its first
+# connection so startup works on a clean server as well as in development.
+if settings.database_url.startswith("sqlite:///"):
+    database_path = settings.database_url.removeprefix("sqlite:///")
+    if database_path and database_path != ":memory:":
+        Path(database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+settings.local_storage_path.mkdir(parents=True, exist_ok=True)
+
+engine=create_engine(settings.database_url, connect_args={"check_same_thread":False} if settings.database_url.startswith("sqlite") else {})
 SessionLocal=sessionmaker(bind=engine, expire_on_commit=False)
 def init_db(): Base.metadata.create_all(engine)

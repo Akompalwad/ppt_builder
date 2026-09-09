@@ -26,6 +26,25 @@ class StorylinePlan(BaseModel):
 class StorylineAgent:
     def _arc_for(self, topic: str) -> tuple[str, list[tuple[str, str, str]]]:
         text=topic.lower()
+        # A topic should determine the *argument* of a deck, not merely its
+        # nouns.  These archetypes deliberately use different story grammar so
+        # a security operating model never reads like an investment comparison.
+        if any(word in text for word in ("threat", "security", "soc", "incident", "vulnerability", "mitigation", "attack")):
+            return "security operations arc", [
+                ("risk landscape", "Make the threat, exposure, and operational stakes tangible.", "insight"),
+                ("response lifecycle", "Show how signals move from detection through containment and learning.", "flow"),
+                ("control plane", "Explain the agents, data, and human controls that govern safe response.", "layers"),
+                ("operating guardrails", "Surface escalation, auditability, and decision rights.", "split"),
+                ("outcome", "Connect the operating model to response quality and resilience.", "evidence"),
+            ]
+        if any(word in text for word in ("investment", "depository", "nsdl", "cdsl", "portfolio", "wealth", "stock", "share", "fund")):
+            return "investor decision arc", [
+                ("decision frame", "Clarify what the investor is choosing and what does not change.", "insight"),
+                ("market foundation", "Explain the market structure and the parties involved.", "layers"),
+                ("decision lenses", "Compare the options on the few criteria an investor can act on.", "compare"),
+                ("investor scenarios", "Map common investor needs to the appropriate practical path.", "split"),
+                ("takeaway", "Land on the broker-first selection rule and next action.", "evidence"),
+            ]
         if any(word in text for word in ("vs", "versus", "compare", "comparison", "trade-off")):
             return "comparison decision arc", [
                 ("context", "Set the decision context and stakes.", "insight"),

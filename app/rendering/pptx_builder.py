@@ -19,11 +19,49 @@ def shade(hex_value: str, amount: int = 12) -> str:
     raw=hex_value.removeprefix("#"); channels=[int(raw[i:i+2],16) for i in (0,2,4)]
     return "#"+"".join(f"{max(0,min(255,c+amount)):02X}" for c in channels)
 
+def mix(first: str, second: str, amount: float) -> str:
+    """Return an opaque colour between two theme colours.
+
+    Opaque gradient stops survive PowerPoint, Keynote, and LibreOffice much
+    more consistently than partially transparent background shapes.
+    """
+    left=first.removeprefix("#"); right=second.removeprefix("#")
+    channels=[]
+    for index in (0,2,4):
+        start=int(left[index:index+2],16); end=int(right[index:index+2],16)
+        channels.append(round(start+(end-start)*max(0,min(1,amount))))
+    return "#"+"".join(f"{channel:02X}" for channel in channels)
+
 def add_shape(slide, kind, x, y, w, h, fill, line=None):
     shape=slide.shapes.add_shape(kind, Inches(x), Inches(y), Inches(w), Inches(h))
     shape.fill.solid(); shape.fill.fore_color.rgb=rgb(fill)
     shape.line.color.rgb=rgb(line or fill)
     return shape
+
+def apply_linear_gradient(shape, stops: list[tuple[int,str]], angle: int = 0):
+    """Apply an OOXML gradient fill with opaque stops to an editable rectangle."""
+    properties=shape._element.spPr
+    for child in list(properties):
+        if child.tag.endswith(("solidFill", "gradFill", "pattFill", "noFill", "blipFill")):
+            properties.remove(child)
+    gradient=OxmlElement("a:gradFill")
+    gradient.set("rotWithShape", "1")
+    stop_list=OxmlElement("a:gsLst")
+    for position, colour in stops:
+        stop=OxmlElement("a:gs"); stop.set("pos",str(position))
+        solid=OxmlElement("a:srgbClr"); solid.set("val",colour.removeprefix("#"))
+        stop.append(solid); stop_list.append(stop)
+    gradient.append(stop_list)
+    linear=OxmlElement("a:lin"); linear.set("ang",str(angle)); linear.set("scaled","1")
+    gradient.append(linear)
+    properties.insert(0,gradient)
+
+def add_gradient_canvas(slide, stops: list[tuple[int,str]], angle: int = 0):
+    """Add a non-interfering full-slide gradient before all content objects."""
+    canvas=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,0,0,W,H,stops[0][1],stops[0][1])
+    canvas.line.transparency=100
+    apply_linear_gradient(canvas,stops,angle)
+    return canvas
 
 def add_surface(slide, x, y, w, h, d, *, emphasis=False):
     """Shared elevated-surface primitive for every panel-like PowerPoint shape."""
@@ -33,28 +71,64 @@ def add_surface(slide, x, y, w, h, d, *, emphasis=False):
     return add_shape(slide,MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,x,y,w,h,fill,shade(d.primary_color,-34))
 
 def apply_background_treatment(slide, treatment: str | None, d):
-    """Subtle theme-colour backgrounds, placed behind every editable object."""
+    """Cross-viewer-safe, theme-colour gradient backgrounds.
+
+    Keynote flattens transparency on several native PowerPoint shapes.  The
+    prior halo/spotlight implementation therefore became a giant opaque circle
+    above slide content.  Use opaque gradient stops behind the content instead.
+    """
     treatment=(treatment or "clean").lower()
+    background=d.background_color
     if treatment=="halo":
-        halo=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,9.15,.65,4.25,4.25,d.primary_color,d.primary_color); halo.fill.transparency=88; halo.line.transparency=100
-        accent=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,10.62,1.92,1.70,1.70,d.secondary_color,d.secondary_color); accent.fill.transparency=86; accent.line.transparency=100
+        add_gradient_canvas(slide,[(0,background),(61000,background),(100000,mix(background,d.primary_color,.12))])
     elif treatment=="diagonal":
-        band=add_shape(slide,MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,9.65,-.85,4.9,9.2,d.primary_color,d.primary_color); band.fill.transparency=92; band.line.transparency=100
+        add_gradient_canvas(slide,[(0,background),(64000,background),(100000,mix(background,d.primary_color,.09))],angle=2700000)
     elif treatment=="spotlight":
-        spot=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,7.6,3.8,5.1,2.6,d.primary_color,d.primary_color); spot.fill.transparency=93; spot.line.transparency=100
+        add_gradient_canvas(slide,[(0,background),(52000,mix(background,d.primary_color,.045)),(100000,mix(background,d.primary_color,.13))],angle=18900000)
     elif treatment=="blueprint":
-        # Light construction lines reinforce system/architecture content while
-        # retaining the theme's palette and remaining editable in PowerPoint.
-        for x in (7.5,8.4,9.3,10.2,11.1,12.0):
-            line=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,.15,.012,7.2,d.primary_color,d.primary_color); line.fill.transparency=91; line.line.transparency=100
-        for y in (1.15,2.05,2.95,3.85,4.75,5.65,6.55):
-            line=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,7.2,y,5.9,.012,d.primary_color,d.primary_color); line.fill.transparency=91; line.line.transparency=100
+        add_gradient_canvas(slide,[(0,background),(100000,mix(background,d.primary_color,.08))],angle=2700000)
+
+def estimated_text_height(text: str, size: int, width: float, *, bold: bool = False) -> float:
+    """Conservative cross-viewer text measurement in slide inches.
+
+    python-pptx cannot ask PowerPoint or Keynote for font metrics.  This
+    estimate deliberately reserves more room than browser metrics so a saved
+    deck remains readable when opened by either application.
+    """
+    text=clean_copy(text)
+    if not text:
+        return .04
+    average_character_width=.56 if bold else .52
+    characters_per_line=max(5,int(width*72/(max(size,1)*average_character_width)))
+    lines=0
+    for paragraph in text.split("\n"):
+        words=paragraph.split() or [""]
+        line_length=0
+        for word in words:
+            word_length=len(word)+(1 if line_length else 0)
+            if line_length and line_length+word_length>characters_per_line:
+                lines+=1; line_length=len(word)
+            else:
+                line_length+=word_length
+        lines+=1
+    return lines*size*1.34/72+.05
+
+def fitted_text_size(text: str, preferred: int, width: float, height: float, *, bold: bool = False, minimum: int = 11) -> int:
+    """Return the largest readable type size that fits the supplied lane."""
+    for size in range(preferred, minimum-1, -1):
+        if estimated_text_height(text,size,width,bold=bold)<=height:
+            return size
+    return minimum
 
 def add_text(slide, text, x, y, w, h, size, color, bold=False, *, align=PP_ALIGN.LEFT, font="Arial", valign=MSO_ANCHOR.TOP):
     box=slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h)); frame=box.text_frame
     frame.clear(); frame.word_wrap=True; frame.margin_left=frame.margin_right=0; frame.margin_top=frame.margin_bottom=0; frame.vertical_anchor=valign
     p=frame.paragraphs[0]; p.text=(text or "").strip(); p.alignment=align
-    p.font.size=Pt(size); p.font.bold=bold; p.font.name=font; p.font.color.rgb=rgb(color)
+    # This is the single fit gate used by every renderer layout.  Individual
+    # layouts allocate their own lanes, but no text can silently spill outside
+    # its containing shape in a downloaded PPTX.
+    fitted=fitted_text_size(p.text,size,w,h,bold=bold)
+    p.font.size=Pt(fitted); p.font.bold=bold; p.font.name=font; p.font.color.rgb=rgb(color)
     return box
 
 def text_size(text: str, base: int, width: float) -> int:
@@ -100,32 +174,30 @@ def header(slide, spec: SlideSpec, d):
     add_text(slide, spec.title, MARGIN, .43, 9.9, .76, text_size(spec.title, 32, 9.9), d.header_color, True, font=d.font_heading)
     if spec.subtitle: add_text(slide, spec.subtitle, MARGIN, 1.38, 10.6, .36, 16, d.text_secondary, font=d.font_body)
     topic_icon(slide,str(spec.visual_spec.get("icon_concept","")),11.28,.52,d)
-    add_text(slide, f"{spec.slide_number:02d}", 11.86, .61, .65, .28, 10, d.muted_text, True, align=PP_ALIGN.RIGHT)
+    # Slide numbering is deliberately rendered once in the shared footer.
+    # A second header number looked like a misplaced page number in Keynote.
 
 def accent_orb(slide, x, y, size, d):
     circle=add_shape(slide, MSO_AUTO_SHAPE_TYPE.OVAL, x, y, size, size, shade(d.primary_color, -70), d.primary_color)
     circle.fill.transparency=18
 
 def depth_orb(slide, x, y, size, d):
-    """Native layered transparency approximates the browser preview's radial depth."""
-    outer=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x,y,size,size,shade(d.primary_color,-95),shade(d.primary_color,-95)); outer.fill.transparency=34
-    middle=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+size*.15,y+size*.15,size*.68,size*.68,shade(d.primary_color,-48),shade(d.primary_color,-48)); middle.fill.transparency=35
-    inner=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+size*.32,y+size*.29,size*.36,size*.36,d.primary_color,d.primary_color); inner.fill.transparency=58
+    """One portable focal orb, kept behind content and free of transparency."""
+    orb=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x,y,size,size,d.background_color,d.background_color)
+    orb.line.transparency=100
+    apply_linear_gradient(
+        orb,
+        [(0,mix(d.background_color,d.primary_color,.28)), (100000,mix(d.background_color,d.primary_color,.025))],
+        angle=18900000,
+    )
 
 def comparison_cover_visual(slide, title: str, d):
-    """A topic-aware focal visual for comparison covers, kept fully editable."""
-    parts=re.split(r"\s+(?:vs\.?|versus)\s+", title, maxsplit=1, flags=re.I)
-    if len(parts)!=2 or not all(part.strip() for part in parts):
-        depth_orb(slide,8.95,1.05,3.05,d)
-        return
-    left, right=(part.strip() for part in parts)
-    # Two equal fields communicate a decision without implying that one choice
-    # wins before the deck has presented the criteria.
-    for x, label, fill, opacity in ((8.52,left,shade(d.primary_color,-58),24),(10.78,right,d.primary_color,14)):
-        circle=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x,1.72,1.88,1.88,fill,d.primary_color)
-        circle.fill.transparency=opacity
-        add_text(slide,label,x+.16,2.48,1.56,.28,text_size(label,16,1.56),"#FFFFFF",True,align=PP_ALIGN.CENTER,font=d.font_heading)
-    add_text(slide,"vs.",10.28,2.43,.62,.22,13,d.primary_color,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+    """Use the same single focal visual as the browser cover preview.
+
+    The title already conveys the comparison.  Labelled circles duplicated it,
+    wrapped unpredictably, and created a different composition in Keynote.
+    """
+    depth_orb(slide,8.95,1.05,3.05,d)
 
 def topic_icon(slide, concept: str, x: float, y: float, d):
     """Editable native icon selected from the visual director's topic-specific concept."""
@@ -157,7 +229,15 @@ def card(slide, element, x, y, w, h, d, index: int, emphasis=False):
 def grid_cards(slide, spec, d):
     elements=spec.elements[:6]; count=len(elements)
     columns=2 if count in (2,4,6) else min(3,max(1,count)); rows=(count+columns-1)//columns
-    gap=.24; total_w=W-2*MARGIN; card_w=(total_w-gap*(columns-1))/columns; card_h=min(3.95,(4.62-gap*(rows-1))/rows)
+    gap=.24; total_w=W-2*MARGIN; card_w=(total_w-gap*(columns-1))/columns
+    max_available=(4.62-gap*(rows-1))/rows
+    required=[]
+    for item in elements:
+        heading=item.heading or item.label or "Key insight"; body=element_text(item)
+        required.append(.74+estimated_text_height(heading,text_size(heading,24,card_w-.48),card_w-.48,bold=True)+.14+estimated_text_height(body,text_size(body,16,card_w-.48),card_w-.48))
+    # Cards grow for their actual copy up to the space reserved by this slide;
+    # all cards in a grid share the tallest required height for clean alignment.
+    card_h=min(max_available,max(1.15,max(required,default=1.15)))
     for i, item in enumerate(elements):
         col,row=i%columns,i//columns
         card(slide,item,MARGIN+col*(card_w+gap),CONTENT_Y+row*(card_h+gap),card_w,card_h,d,i,emphasis=i==0)
@@ -303,16 +383,34 @@ def evidence_strip(slide, spec, d):
         x=MARGIN+index*(width+gap)
         add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,CONTENT_Y,.08,3.62,d.primary_color,d.primary_color)
         add_text(slide,f"0{index+1}",x+.28,CONTENT_Y+.12,width-.28,.24,12,d.primary_color,True)
-        add_text(slide,item.heading or "Evidence",x+.28,CONTENT_Y+.72,width-.38,.65,26,d.text_primary,True,font=d.font_heading)
-        add_text(slide,element_text(item),x+.28,CONTENT_Y+1.72,width-.38,1.08,17,d.text_secondary)
+        heading=item.heading or "Evidence"
+        # A 26pt heading in a .65in box works for one line only.  Keynote
+        # exposes that overflow rather than shrinking it, so allocate space
+        # from the body lane before creating either text object.
+        long_heading=len(clean_copy(heading))>24
+        heading_height=1.18 if long_heading else .66
+        heading_size=20 if long_heading else 24
+        heading_y=CONTENT_Y+.72
+        body_y=heading_y+heading_height+.16
+        body_height=CONTENT_Y+3.62-body_y-.10
+        add_text(slide,heading,x+.28,heading_y,width-.38,heading_height,text_size(heading,heading_size,width-.38),d.text_primary,True,font=d.font_heading)
+        add_text(slide,element_text(item),x+.28,body_y,width-.38,body_height,16,d.text_secondary)
 
 def asymmetric_insight(slide, spec, d):
-    add_text(slide,spec.purpose,MARGIN,CONTENT_Y+.18,5.0,1.48,30,d.text_primary,True,font=d.font_heading)
+    purpose=clean_copy(spec.purpose)
+    purpose_size=26 if len(purpose)>70 else 30
+    # This lead can occupy several lines.  It is not constrained by the two
+    # supporting cards, so reserve a real reading lane instead of clipping it.
+    add_text(slide,purpose,MARGIN,CONTENT_Y+.18,5.0,2.24,purpose_size,d.text_primary,True,font=d.font_heading)
     for index,item in enumerate(spec.elements[:2]):
         y=CONTENT_Y+index*1.74
-        add_surface(slide,6.3,y,6.25,1.35,d,emphasis=index==0)
-        add_text(slide,item.heading or "Key point",6.62,y+.25,5.55,.28,21,d.primary_color,True,font=d.font_heading)
-        add_text(slide,element_text(item),6.62,y+.70,5.55,.32,16,d.text_secondary)
+        card_height=1.55
+        heading=item.heading or "Key point"
+        add_surface(slide,6.3,y,6.25,card_height,d,emphasis=index==0)
+        add_text(slide,heading,6.62,y+.24,5.55,.36,text_size(heading,20,5.55),d.primary_color,True,font=d.font_heading)
+        # Bodies routinely need two or three lines.  Give them a fixed,
+        # generous lane inside the surface rather than a .32in single line.
+        add_text(slide,element_text(item),6.62,y+.72,5.55,.68,15,d.text_secondary)
 
 def section_interlude(slide, spec, d):
     """Minimal breathing room between dense content sections."""

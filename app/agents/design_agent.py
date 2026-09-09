@@ -92,7 +92,7 @@ Return JSON only: {{"slides":[{{"slide_number":1,"recipe":"...","visual_directio
 Allowed recipes: cover, split, compare, evidence, flow, layers, insight, grid, close, section.
 Allowed visual variants: editorial_cover, chevron_flow, cycle_loop, layer_stack, isometric_stack, comparison_table, split_decision, metric_dashboard, editorial_insight, image_story, summary_blueprint, section_break.
 Allowed background treatments: halo, blueprint, diagonal, spotlight, clean.
-Rules: slide 1 must use cover; the final slide must use close. Vary adjacent recipes. Prefer compare for direct criteria, flow for a sequence, layers for a system, evidence for quantified proof, split for a decision, and insight for a single strong claim. Use cycle_loop only for repeated feedback; use isometric_stack only for a true architecture hierarchy. Keep background treatments subtle and vary them only when they reinforce the visual role. visual_direction is a short instruction for an editable native visual, not a list of boxes.'''
+Rules: slide 1 must use cover; the final slide must use close. Vary adjacent recipes and preserve the narrative role of each slide. Prefer compare for direct criteria, flow for a sequence, layers for a system, evidence for quantified proof, split for a decision, and insight for a single strong claim. Use cycle_loop only for repeated feedback; use isometric_stack only for a true architecture hierarchy. Keep background treatments subtle and vary them only when they reinforce the visual role. visual_direction is a short instruction for an editable native visual, not a list of boxes.'''
         try:
             max_tokens=min(700, get_settings().gemini_max_output_tokens) if provider=="gemini" else 700
             response=_DesignResponse.model_validate(

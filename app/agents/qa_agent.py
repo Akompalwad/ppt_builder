@@ -32,6 +32,11 @@ def comparison_cover_title(topic: str) -> str | None:
     if not match:
         return None
     left, right=(part.strip(" ,:;-") for part in match.groups())
+    # Prompts are often written as one sentence, for example "NSDL vs CDSL
+    # which should I choose?".  Keep the compared entities on the cover and
+    # leave the decision question for the subtitle instead of putting it in a
+    # circle or an overlong title.
+    right=re.split(r"\s+(?=(?:which|what|who|when|where|why|how)\b)", right, maxsplit=1, flags=re.I)[0].strip(" ,:;-")
     if not left or not right:
         return None
     return f"{left} vs. {right}"

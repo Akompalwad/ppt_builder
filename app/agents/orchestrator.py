@@ -7,13 +7,34 @@ from app.agents.storyline_agent import StorylineAgent
 from app.agents.slide_content_agent import SlideContentAgent
 from app.config import get_settings
 from datetime import datetime, timezone
+import hashlib
 import re
 
 THEMES={
  "Cyber Dark": DesignSystem(),
  "Minimalist White": DesignSystem(name="Minimalist White",background_color="#FFFFFF",surface_color="#F5F7FA",primary_color="#1565C0",accent_color="#F57C00",header_color="#1A2B3C",text_primary="#17212B",text_secondary="#52606D"),
  "Corporate Blue": DesignSystem(name="Corporate Blue",background_color="#F4F8FC",surface_color="#FFFFFF",primary_color="#0057B8",secondary_color="#0B7FAB",accent_color="#FF9F1C",header_color="#003A70",text_primary="#102A43",text_secondary="#486581"),
+ "Security Signal": DesignSystem(name="Security Signal",background_color="#081117",surface_color="#10272C",primary_color="#20D3A2",secondary_color="#197C78",accent_color="#FFB703",header_color="#D9FFF1",text_primary="#F2FFFB",text_secondary="#B6D4CC",muted_text="#7CA69A"),
+ "Investor Slate": DesignSystem(name="Investor Slate",background_color="#F4F7FB",surface_color="#FFFFFF",primary_color="#1B5FBF",secondary_color="#6B8FBE",accent_color="#E89B1F",header_color="#123257",text_primary="#172D46",text_secondary="#536A82",muted_text="#71869B"),
+ "Aurora Tech": DesignSystem(name="Aurora Tech",background_color="#101024",surface_color="#20213C",primary_color="#A78BFA",secondary_color="#3B82F6",accent_color="#F6C945",header_color="#F4F0FF",text_primary="#FAF9FF",text_secondary="#C7C5E1",muted_text="#9390B5"),
 }
+
+def auto_theme_for_topic(topic: str) -> DesignSystem:
+    """Choose a coherent but topic-appropriate visual system for Auto."""
+    text=topic.lower()
+    if any(word in text for word in ("threat", "security", "soc", "incident", "vulnerability", "attack")):
+        return THEMES["Security Signal"]
+    if any(word in text for word in ("investment", "depository", "nsdl", "cdsl", "portfolio", "wealth", "stock", "share", "fund")):
+        return THEMES["Investor Slate"]
+    if any(word in text for word in ("ai", "software", "platform", "cloud", "data", "technology", "automation")):
+        return THEMES["Aurora Tech"]
+    # Keep Auto varied for unrelated topics while deterministic across restarts.
+    names=("Cyber Dark", "Minimalist White", "Corporate Blue")
+    index=hashlib.sha256(topic.strip().lower().encode()).digest()[0] % len(names)
+    return THEMES[names[index]]
+
+def resolve_theme(theme_name: str, topic: str) -> DesignSystem:
+    return auto_theme_for_topic(topic) if theme_name == "Auto" else THEMES.get(theme_name, THEMES["Cyber Dark"])
 
 def trace(agent: str, status: str, summary: str, output: dict) -> dict:
     """Inspectable agent artifact; deliberately a concise result, not hidden reasoning."""
@@ -45,7 +66,7 @@ class PresentationOrchestrator:
         if selected_provider in {"nvidia", "gemini", "ollama"}:
             try:
                 stage("RESEARCHING", 22)
-                resolved_theme=THEMES.get(request.theme, THEMES["Cyber Dark"] if request.theme == "Auto" else THEMES["Cyber Dark"])
+                resolved_theme=resolve_theme(request.theme, topic)
                 prompt=f'''Create a professional {request.slide_count}-slide PowerPoint deck specification.
 Topic: {topic}\nAudience: {request.audience}\nTone: {request.tone}\nLanguage: {request.language}\nTheme: {resolved_theme.name}
 Return one JSON object with these top-level fields: title, subtitle, topic, objective, target_audience, language, theme, slides. The `theme` value must be exactly "{resolved_theme.name}". Each slide must contain slide_number, title, layout_type, purpose, elements, and visual_spec. Each element contains type, heading, and body. visual_spec contains icon_concept, image_required, image_prompt, and stock_query.
@@ -125,7 +146,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
         else:
             fallback_reason=""
         stage("VALIDATING", 28); stage("PLANNING", 42)
-        theme=THEMES.get(request.theme, THEMES["Cyber Dark"] if request.theme == "Auto" else THEMES["Cyber Dark"])
+        theme=resolve_theme(request.theme, topic)
         stage("DESIGNING", 55); stage("PLANNING_VISUALS", 66)
         slides=[]
         if "kubernetes" in topic.lower() and "monolith" in topic.lower():

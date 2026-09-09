@@ -11,6 +11,15 @@ from app.rendering.layout_geometry import IMAGE_CONTENT, x_percent, y_percent
 def esc(value: object) -> str: return html.escape(str(value or ""))
 def body(element) -> str: return esc(element.body or element.subtext or element.value or "")
 
+def mix(first: str, second: str, amount: float) -> str:
+    """Mirror the opaque theme tint used by the PowerPoint renderer."""
+    left=first.removeprefix("#"); right=second.removeprefix("#")
+    channels=[]
+    for index in (0,2,4):
+        start=int(left[index:index+2],16); end=int(right[index:index+2],16)
+        channels.append(round(start+(end-start)*max(0,min(1,amount))))
+    return "#"+"".join(f"{channel:02X}" for channel in channels)
+
 def image_data_url(path: str | None) -> str:
     if not path: return ""
     file=Path(path)
@@ -22,16 +31,16 @@ def cards(slide: SlideSpec) -> str:
     return "".join(f'''<section class="card"><span class="index">{index+1:02d}</span><h3>{esc(item.heading or item.label or 'Key insight')}</h3><p>{body(item)}</p></section>''' for index,item in enumerate(slide.elements[:4]))
 
 def background_css(slide: SlideSpec, d) -> str:
-    """Mirror the PPTX treatment with restrained, theme-colour CSS layers."""
+    """Mirror the portable PowerPoint gradient with restrained CSS layers."""
     treatment=str(slide.visual_spec.get("background_treatment") or "clean").lower()
     if treatment=="halo":
-        return f"radial-gradient(circle at 82% 26%, {d.primary_color}26, transparent 25%), radial-gradient(circle at 90% 40%, {d.secondary_color}1f, transparent 12%), {d.background_color}"
+        return f"linear-gradient(90deg, {d.background_color} 0 61%, {mix(d.background_color,d.primary_color,.12)} 100%)"
     if treatment=="diagonal":
-        return f"linear-gradient(118deg, {d.background_color} 0 67%, {d.primary_color}12 67% 85%, {d.background_color} 85%)"
+        return f"linear-gradient(135deg, {d.background_color} 0 64%, {mix(d.background_color,d.primary_color,.09)} 100%)"
     if treatment=="spotlight":
-        return f"radial-gradient(ellipse at 79% 72%, {d.primary_color}15, transparent 31%), {d.background_color}"
+        return f"linear-gradient(315deg, {d.background_color} 0 52%, {mix(d.background_color,d.primary_color,.13)} 100%)"
     if treatment=="blueprint":
-        return f"linear-gradient({d.primary_color}12 1px, transparent 1px), linear-gradient(90deg, {d.primary_color}12 1px, transparent 1px), {d.background_color}; background-size:56px 56px"
+        return f"linear-gradient(135deg, {d.background_color}, {mix(d.background_color,d.primary_color,.08)})"
     return d.background_color
 
 def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
@@ -92,6 +101,6 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
       .cycle {{ position:relative; width:58%; aspect-ratio:1.45; margin:5% auto 0; }} .cycle>strong,.cycle-node {{ position:absolute; display:grid; place-items:center; text-align:center; border:1px solid {d.primary_color}; border-radius:50%; }} .cycle>strong {{ inset:31% 32%; padding:10px; background:{d.surface_color}; font-size:clamp(12px,1.2vw,17px); }} .cycle-node {{ width:30%; aspect-ratio:1; padding:10px; background:{d.surface_color}; }} .cycle-node h3 {{ font-size:clamp(12px,1.2vw,17px); color:{d.text_primary}; }} .node-1 {{ left:35%; top:0; }} .node-2 {{ right:0; top:35%; }} .node-3 {{ left:0; top:35%; }} .node-4 {{ left:35%; bottom:0; }}
       .iso-stack {{ width:68%; margin:10% auto 0; }} .iso-layer {{ transform:skewX(-16deg); border:1px solid {d.primary_color}; background:{d.surface_color}; padding:15px 32px; margin-top:-2px; }} .iso-layer>* {{ transform:skewX(16deg); }} .iso-layer h3 {{ font-size:clamp(15px,1.5vw,22px); }} .iso-layer p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); }}
       .title {{ padding:9% 6%; }} .title:before {{ display:none; }} .title-copy {{ position:relative; z-index:2; width:61%; }} .title h1 {{ color:{d.header_color}; font-size:clamp(30px,5vw,66px); line-height:.98; margin:22px 0; }} .title p {{ color:{d.text_secondary}; font-size:clamp(15px,1.65vw,23px); line-height:1.35; }}
-      .hero {{ position:absolute; right:5%; top:8%; height:84%; max-width:31%; object-fit:cover; border-left:7px solid {d.primary_color}; }} .orb {{ position:absolute; right:9%; top:16%; width:25%; aspect-ratio:1; border-radius:50%; background:radial-gradient(circle at 35% 35%,{d.primary_color},transparent 65%); opacity:.45; }}
+      .hero {{ position:absolute; right:5%; top:8%; height:84%; max-width:31%; object-fit:cover; border-left:7px solid {d.primary_color}; }} .orb {{ position:absolute; right:9%; top:16%; width:25%; aspect-ratio:1; border-radius:50%; background:linear-gradient(315deg,{mix(d.background_color,d.primary_color,.28)},{mix(d.background_color,d.primary_color,.025)}); }}
       .visual-layout {{ position:absolute; left:{x_percent(IMAGE_CONTENT['lead'][0])}; top:{y_percent(IMAGE_CONTENT['lead'][1])}; width:{x_percent(visual_width)}; height:{y_percent(visual_height)}; }} .visual-copy {{ position:absolute; left:0; top:0; width:{visual_copy_width:.3f}%; height:100%; }} .visual-layout strong {{ display:block; width:100%; height:{IMAGE_CONTENT['lead'][3]/visual_height*100:.3f}%; font-size:clamp(17px,1.8vw,25px); line-height:1.08; }} .visual-cards {{ position:absolute; left:0; top:{visual_cards_top:.3f}%; width:100%; display:grid; gap:{visual_card_gap:.3f}%; }} .visual-cards .card {{ min-height:{visual_card_height:.3f}%; height:{visual_card_height:.3f}%; padding:11px 15px; }} .visual-cards .card h3 {{ margin:0 0 5px; }} .content-image {{ position:absolute; left:{visual_image_left:.3f}%; top:0; width:{visual_image_width:.3f}%; height:100%; object-fit:cover; border-radius:12px; border:1px solid {d.primary_color}; }}
     </style><article class="deckforge-preview {kind}">{content}</article>''').strip()
