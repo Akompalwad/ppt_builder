@@ -28,4 +28,4 @@ class PresentationSpec(BaseModel):
         return slides
 
 class CreatePresentationRequest(BaseModel):
-    topic: str = Field(min_length=3, max_length=2000); slide_count: int = Field(default=6, ge=3, le=10); theme: str = "Auto"; provider: str | None = None; model: str | None = None; audience: str = "General audience"; tone: str = "Professional"; language: str = "English"; email_notification: bool = False; include_external_images: bool = False
+    topic: str = Field(min_length=3, max_length=2000); slide_count: int = Field(default=6, ge=3, le=10); theme: str = "Auto"; provider: str | None = None; model: str | None = None; audience: str = "General audience"; tone: str = "Professional"; language: str = "English"; email_notification: bool = False; include_external_images: bool = True

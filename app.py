@@ -23,7 +23,7 @@ with st.sidebar:
     provider=st.selectbox("Provider",["Gemini","NVIDIA","Ollama"]); model=st.text_input("Model (optional)")
     theme=st.selectbox("Theme",["Auto","Cyber Dark","Minimalist White","Corporate Blue"]); count=st.slider("Slides",3,10,6)
     audience=st.text_input("Audience","General audience"); tone=st.selectbox("Tone",["Professional","Executive","Educational","Persuasive"])
-    include_images=st.checkbox("Generate topic-specific visuals",help="Requires a configured image provider; at most three visuals per deck.")
+    include_images=st.checkbox("Use topic-specific Unsplash visuals",value=True,help="Uses Unsplash when configured; at most three visuals per deck. Native editable visuals remain the fallback.")
     st.divider()
     st.subheader("My presentations")
     try:

@@ -31,7 +31,12 @@ def cleanup_expired_files(now: datetime | None = None) -> list[str]:
             if presentation_id != folder.name: continue
         except (ValueError, KeyError, json.JSONDecodeError):
             continue
-        shutil.rmtree(folder)
+        try:
+            shutil.rmtree(folder)
+        except FileNotFoundError:
+            # A manual cleanup or a prior worker may have removed it between
+            # validation and deletion. Treat that directory as already gone.
+            continue
         with SessionLocal() as db:
             presentation=db.get(Presentation,presentation_id)
             if presentation: presentation.status="EXPIRED"; db.commit()

@@ -32,6 +32,24 @@ def add_surface(slide, x, y, w, h, d, *, emphasis=False):
     fill=shade(d.surface_color,8 if emphasis else 0)
     return add_shape(slide,MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE,x,y,w,h,fill,shade(d.primary_color,-34))
 
+def apply_background_treatment(slide, treatment: str | None, d):
+    """Subtle theme-colour backgrounds, placed behind every editable object."""
+    treatment=(treatment or "clean").lower()
+    if treatment=="halo":
+        halo=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,9.15,.65,4.25,4.25,d.primary_color,d.primary_color); halo.fill.transparency=88; halo.line.transparency=100
+        accent=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,10.62,1.92,1.70,1.70,d.secondary_color,d.secondary_color); accent.fill.transparency=86; accent.line.transparency=100
+    elif treatment=="diagonal":
+        band=add_shape(slide,MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,9.65,-.85,4.9,9.2,d.primary_color,d.primary_color); band.fill.transparency=92; band.line.transparency=100
+    elif treatment=="spotlight":
+        spot=add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,7.6,3.8,5.1,2.6,d.primary_color,d.primary_color); spot.fill.transparency=93; spot.line.transparency=100
+    elif treatment=="blueprint":
+        # Light construction lines reinforce system/architecture content while
+        # retaining the theme's palette and remaining editable in PowerPoint.
+        for x in (7.5,8.4,9.3,10.2,11.1,12.0):
+            line=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,.15,.012,7.2,d.primary_color,d.primary_color); line.fill.transparency=91; line.line.transparency=100
+        for y in (1.15,2.05,2.95,3.85,4.75,5.65,6.55):
+            line=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,7.2,y,5.9,.012,d.primary_color,d.primary_color); line.fill.transparency=91; line.line.transparency=100
+
 def add_text(slide, text, x, y, w, h, size, color, bold=False, *, align=PP_ALIGN.LEFT, font="Arial", valign=MSO_ANCHOR.TOP):
     box=slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h)); frame=box.text_frame
     frame.clear(); frame.word_wrap=True; frame.margin_left=frame.margin_right=0; frame.margin_top=frame.margin_bottom=0; frame.vertical_anchor=valign
@@ -44,6 +62,14 @@ def text_size(text: str, base: int, width: float) -> int:
     density=len(text or "") / max(width, .5)
     # Copy must be shortened upstream; never solve poor composition by tiny type.
     return max(16, base-4) if density>95 else max(16,base-2) if density>65 else base
+
+def cover_title_size(text: str) -> int:
+    """Keep cover text in its dedicated lane above the subtitle."""
+    length=len(clean_copy(text))
+    if length > 78: return 32
+    if length > 58: return 38
+    if length > 40: return 44
+    return 50
 
 def clean_copy(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").replace("\\n", " ").replace("\n", " ")).strip()
@@ -123,8 +149,10 @@ def card(slide, element, x, y, w, h, d, index: int, emphasis=False):
         add_text(slide, heading, x+.78, y+.22, w-1.02, .3, 16, d.text_primary, True, font=d.font_heading)
         add_text(slide, body, x+.78, y+.65, w-1.02, .3, 16, d.text_secondary, font=d.font_body)
     else:
-        add_text(slide, heading, x+.24, y+.74, w-.48, .52, text_size(heading, 24, w-.48), d.text_primary, True, font=d.font_heading)
-        add_text(slide, body, x+.24, y+1.38, w-.48, h-1.58, text_size(body, 16, w-.48), d.text_secondary, font=d.font_body)
+        heading_height=.94 if len(heading)>20 else .52
+        add_text(slide, heading, x+.24, y+.74, w-.48, heading_height, text_size(heading, 24, w-.48), d.text_primary, True, font=d.font_heading)
+        body_y=y+.74+heading_height+.16
+        add_text(slide, body, x+.24, body_y, w-.48, h-(body_y-y)-.20, text_size(body, 16, w-.48), d.text_secondary, font=d.font_body)
 
 def grid_cards(slide, spec, d):
     elements=spec.elements[:6]; count=len(elements)
@@ -143,6 +171,47 @@ def workflow(slide, spec, d):
             connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+width+.06), Inches(2.56), Inches(x+width+gap-.06), Inches(2.56)); connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.5)
         add_text(slide,item.heading or f"Step {i+1}",x,3.05,width,.48,text_size(item.heading or "",16,width),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
         add_text(slide,element_text(item),x+.08,3.72,width-.16,1.1,text_size(element_text(item),12,width-.16),d.text_secondary,align=PP_ALIGN.CENTER)
+
+def chevron_flow(slide, spec, d):
+    """A native, editable process diagram rather than a row of cards."""
+    items=spec.elements[:4]; count=max(1,len(items)); gap=.10; width=(W-2*MARGIN-gap*(count-1))/count
+    for index,item in enumerate(items):
+        x=MARGIN+index*(width+gap)
+        shape=add_shape(slide,MSO_AUTO_SHAPE_TYPE.CHEVRON,x,2.45,width,1.15,shade(d.surface_color,8) if index else d.primary_color,d.primary_color)
+        if index==0: shape.fill.transparency=10
+        add_text(slide,str(index+1),x+.27,2.72,.22,.18,11,d.background_color if index==0 else d.primary_color,True,align=PP_ALIGN.CENTER)
+        add_text(slide,item.heading or f"Step {index+1}",x+.56,2.68,width-.88,.28,text_size(item.heading or "",16,width-.88),d.text_primary if index else d.background_color,True,font=d.font_heading)
+        add_text(slide,element_text(item),x+.12,4.05,width-.24,1.0,text_size(element_text(item),14,width-.24),d.text_secondary,align=PP_ALIGN.CENTER)
+
+def cycle_loop(slide, spec, d):
+    """Feedback loop diagram for recurring review, QA, and operating cycles."""
+    items=spec.elements[:4]; node_w,node_h=2.45,1.08
+    positions=((5.44,1.78),(8.55,3.40),(2.30,3.40),(5.44,5.02))[:len(items)]
+    center_x,center_y=6.67,3.86
+    # Join each stage to the next before adding nodes, which keeps the
+    # connectors visually behind the labels and makes the feedback loop clear.
+    centers=[(x+node_w/2,y+node_h/2) for x,y in positions]
+    for start,end in zip(centers,centers[1:]+centers[:1],strict=False):
+        connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT,Inches(start[0]),Inches(start[1]),Inches(end[0]),Inches(end[1]))
+        connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.5)
+    # The loop centre is a visual anchor, not a place for a full sentence.
+    # Keeping this fixed label prevents a slide purpose from colliding with
+    # connectors or node copy when it spans multiple lines.
+    add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,center_x-.92,center_y-.34,1.84,.68,shade(d.surface_color,10),d.primary_color)
+    add_text(slide,"QA LOOP",center_x-.70,center_y-.08,1.40,.18,12,d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+    for index,(item,(x,y)) in enumerate(zip(items,positions,strict=False)):
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x,y,node_w,node_h,shade(d.surface_color,8),d.primary_color)
+        add_text(slide,item.heading or f"Cycle {index+1}",x+.18,y+.22,node_w-.36,.62,text_size(item.heading or "",13,node_w-.36),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+
+def isometric_stack(slide, spec, d):
+    """A 2.5D native architecture stack: editable and stable across viewers."""
+    items=spec.elements[:4]
+    for index,item in enumerate(reversed(items)):
+        y=4.88-index*.78; inset=index*.36; width=8.55-index*.72
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,2.38+inset,y,width,.56,shade(d.surface_color,12+index*5),d.primary_color)
+        add_text(slide,item.heading or f"Layer {len(items)-index}",2.82+inset,y+.14,width-.72,.22,17,d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        if index==0:
+            add_text(slide,element_text(item),2.92,y+.72,8.0,.34,15,d.text_secondary,align=PP_ALIGN.CENTER)
 
 def two_columns(slide, spec, d):
     items=(spec.elements+[SlideElement(heading="",body=""),SlideElement(heading="",body="")])[:2]
@@ -173,9 +242,9 @@ def title_slide(slide, spec, d):
     else:
         comparison_cover_visual(slide,spec.title,d)
     add_text(slide,"DECKFORGE / BRIEF",MARGIN,1.12,3.0,.24,10,d.primary_color,True)
-    add_text(slide,spec.title,MARGIN,1.62,text_width,2.52,text_size(spec.title,50,text_width),d.header_color,True,font=d.font_heading)
+    add_text(slide,spec.title,MARGIN,1.62,text_width,2.60,cover_title_size(spec.title),d.header_color,True,font=d.font_heading)
     subtitle=spec.subtitle or spec.purpose
-    add_text(slide,subtitle,MARGIN,4.52,7.2,.66,20,d.text_secondary)
+    add_text(slide,subtitle,MARGIN,4.58,7.2,.66,20,d.text_secondary)
 
 def add_picture_cover(slide, image_path: Path, x: float, y: float, w: float, h: float):
     """Place a raster visual inside an exact canvas frame without spillover."""
@@ -272,12 +341,17 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
     prs=Presentation(); prs.slide_width=Inches(W); prs.slide_height=Inches(H); blank=prs.slide_layouts[6]; d=spec.design_system
     for spec_slide in spec.slides:
         slide=prs.slides.add_slide(blank); slide.background.fill.solid(); slide.background.fill.fore_color.rgb=rgb(d.background_color)
+        apply_background_treatment(slide,spec_slide.visual_spec.get("background_treatment"),d)
         if spec_slide.layout_type.value=="title_slide": title_slide(slide,spec_slide,d)
         elif spec_slide.layout_type.value=="section_slide": section_interlude(slide,spec_slide,d)
         else:
             header(slide,spec_slide,d)
             layout=spec_slide.layout_type.value
+            variant=spec_slide.visual_spec.get("visual_variant")
             if spec_slide.visual_spec.get("image_path"): content_with_visual(slide,spec_slide,d)
+            elif variant=="cycle_loop": cycle_loop(slide,spec_slide,d)
+            elif variant=="chevron_flow": chevron_flow(slide,spec_slide,d)
+            elif variant=="isometric_stack": isometric_stack(slide,spec_slide,d)
             elif layout in {"step_workflow","process_flow","timeline"}: workflow(slide,spec_slide,d)
             elif layout=="architecture_layers": architecture(slide,spec_slide,d)
             elif layout=="two_column": two_columns(slide,spec_slide,d)

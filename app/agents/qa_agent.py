@@ -3,6 +3,13 @@ from __future__ import annotations
 import re
 from app.schemas.presentation import LayoutType, PresentationSpec
 
+_PLANNING_COPY = (
+    "set the decision context", "set context", "story intent", "develop this story beat",
+    "frame the outcome", "frame why this topic", "introduce the central question",
+    "land on a memorable recommendation", "explain the importance of choosing",
+)
+_TRAILING_CONNECTORS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "vs", "with"}
+
 
 def comparison_cover_title(topic: str) -> str | None:
     """Derive a complete, neutral cover title from a comparison request.
@@ -15,8 +22,13 @@ def comparison_cover_title(topic: str) -> str | None:
     # Use the first comparison sentence only.  Subsequent questions such as
     # "Which should I choose and why?" belong in the supporting copy.
     first=re.split(r"[.?!]", text, maxsplit=1)[0].strip()
-    first=re.sub(r"^(?:please\s+)?(?:create\s+(?:a\s+)?(?:ppt|presentation|deck)\s+(?:that\s+)?)?(?:compare|comparison\s+of)\s+", "", first, flags=re.I)
-    match=re.match(r"^(.+?)\s+(?:vs\.?|versus|and)\s+(.+?)$", first, flags=re.I)
+    explicit_compare=bool(re.match(r"^(?:please\s+)?(?:compare|comparison\s+of)\s+", first, flags=re.I))
+    first=re.sub(r"^(?:please\s+)?(?:compare|comparison\s+of)\s+", "", first, flags=re.I)
+    # An ordinary request can contain "and" (for example, "product and
+    # technical overview"). Treat it as comparison syntax only after an
+    # explicit Compare/Comparison request.
+    separator=r"(?:vs\.?|versus|and)" if explicit_compare else r"(?:vs\.?|versus)"
+    match=re.match(rf"^(.+?)\s+{separator}\s+(.+?)$", first, flags=re.I)
     if not match:
         return None
     left, right=(part.strip(" ,:;-") for part in match.groups())
@@ -36,7 +48,29 @@ def summarize_point(value: str, max_words: int) -> str:
     for clause in clauses:
         if len((" ".join(kept+[clause])).split())<=max_words: kept.append(clause)
     if kept: return ", ".join(kept).rstrip(". ")+"."
-    return " ".join(candidate.split()[:max_words]).rstrip(". ")+"."
+    words=candidate.split()[:max_words]
+    # Never turn a long sentence into a visibly unfinished phrase such as
+    # "the importance of choosing the.".  A later QA fallback can replace
+    # generic planning language with an actual slide fact.
+    while words and words[-1].lower().rstrip(".,:;?!") in _TRAILING_CONNECTORS:
+        words.pop()
+    return " ".join(words).rstrip(". ")+"." if words else ""
+
+def _is_unusable_lead(value: str) -> bool:
+    text=(value or "").strip().lower()
+    if not text or any(phrase in text for phrase in _PLANNING_COPY):
+        return True
+    last=text.rstrip(".?! ").split(" ")[-1] if text else ""
+    return last in _TRAILING_CONNECTORS
+
+def _fact_based_lead(slide) -> str:
+    """Use visible content, never private agent instructions, as a fallback lead."""
+    for element in slide.elements:
+        body=(element.body or element.subtext or element.value or "").strip()
+        if body:
+            return summarize_point(body, 13)
+    heading=next((item.heading or item.label for item in slide.elements if item.heading or item.label), "")
+    return summarize_point(heading or slide.title, 13)
 
 class PresentationQAAgent:
     def validate_and_recompose(self, spec: PresentationSpec) -> dict:
@@ -65,6 +99,11 @@ class PresentationQAAgent:
             else:
                 purpose_budget=18
             slide.purpose=summarize_point(slide.purpose, purpose_budget)
+            if _is_unusable_lead(slide.purpose):
+                replacement=_fact_based_lead(slide)
+                if replacement:
+                    slide.purpose=replacement
+                    issues.append(f"Slide {slide.slide_number}: replaced internal planning copy with a slide fact")
             if slide.layout_type in {LayoutType.step_workflow,LayoutType.process_flow,LayoutType.timeline} and len(slide.elements)>3:
                 slide.layout_type=LayoutType.feature_grid; issues.append(f"Slide {slide.slide_number}: converted dense flow to a readable grid")
             budget=16 if slide.layout_type in {LayoutType.feature_grid,LayoutType.comparison,LayoutType.two_column} else 13

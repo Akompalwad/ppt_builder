@@ -26,6 +26,7 @@ def test_design_director_records_a_visual_direction():
     plan=DesignDirectorAgent().apply(spec)
     assert len(plan.decisions) == 5
     assert all(decision.visual_direction for decision in plan.decisions)
+    assert all(decision.background_treatment for decision in plan.decisions)
 
 def test_qa_restores_both_sides_of_a_comparison_cover():
     spec=PresentationSpec(
@@ -34,3 +35,19 @@ def test_qa_restores_both_sides_of_a_comparison_cover():
     )
     PresentationQAAgent().validate_and_recompose(spec)
     assert spec.slides[0].title == "NSDL vs. CDSL"
+
+def test_qa_does_not_turn_an_overview_request_into_a_fake_comparison():
+    spec=PresentationSpec(
+        title="DeckForge", topic="Create a 7-slide product and technical overview of DeckForge, an AI-powered PowerPoint generator.",
+        slides=[SlideSpec(slide_number=1, title="DeckForge", purpose="Overview", layout_type=LayoutType.title_slide)],
+    )
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert spec.slides[0].title == "DeckForge"
+
+def test_qa_replaces_private_story_instruction_with_slide_fact():
+    spec=PresentationSpec(
+        title="NSDL versus CDSL", topic="Compare NSDL and CDSL",
+        slides=[SlideSpec(slide_number=1, title="Digital wealth", purpose="Set the decision context and stakes by explaining the importance of choosing the.", layout_type=LayoutType.content_with_visual, elements=[{"heading":"What is a depository?", "body":"A digital vault that holds shares and bonds."}])],
+    )
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert spec.slides[0].purpose == "A digital vault that holds shares and bonds."

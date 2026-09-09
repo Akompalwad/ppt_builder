@@ -16,6 +16,8 @@ class DesignDecision(BaseModel):
     native_transition: str
     motion_sequence: list[str] = Field(default_factory=list)
     visual_direction: str = ""
+    visual_variant: str = ""
+    background_treatment: str = ""
 
 class DesignPlan(BaseModel):
     decisions: list[DesignDecision]
@@ -26,6 +28,8 @@ class _DesignChoice(BaseModel):
     slide_number: int
     recipe: Literal["cover", "split", "compare", "evidence", "flow", "layers", "insight", "grid", "close", "section"]
     visual_direction: str = Field(max_length=160)
+    visual_variant: Literal["editorial_cover", "chevron_flow", "cycle_loop", "layer_stack", "isometric_stack", "comparison_table", "split_decision", "metric_dashboard", "editorial_insight", "image_story", "summary_blueprint", "section_break"] = "editorial_insight"
+    background_treatment: Literal["halo", "blueprint", "diagonal", "spotlight", "clean"] = "clean"
 
 class _DesignResponse(BaseModel):
     slides: list[_DesignChoice]
@@ -54,6 +58,23 @@ class DesignDirectorAgent:
             return RECIPES["insight"]
         return RECIPES["grid"]
 
+    @staticmethod
+    def _default_variant(recipe: LayoutRecipe) -> str:
+        return {
+            "cover":"editorial_cover", "split":"split_decision", "compare":"comparison_table",
+            "evidence":"metric_dashboard", "flow":"chevron_flow", "layers":"layer_stack",
+            "insight":"editorial_insight", "grid":"editorial_insight", "close":"summary_blueprint",
+            "section":"section_break",
+        }[recipe.name]
+
+    @staticmethod
+    def _default_background(recipe: LayoutRecipe) -> str:
+        return {
+            "cover":"halo", "split":"diagonal", "compare":"clean", "evidence":"spotlight",
+            "flow":"diagonal", "layers":"blueprint", "insight":"halo", "grid":"clean",
+            "close":"spotlight", "section":"halo",
+        }[recipe.name]
+
     def _model_choices(self, spec: PresentationSpec, provider: str | None, model: str | None) -> dict[int, _DesignChoice]:
         """Ask a dedicated design planner for composition only, never copy."""
         if provider not in {"gemini", "nvidia", "ollama"}:
@@ -67,9 +88,11 @@ Topic: {spec.topic}
 Slides:
 {slides}
 
-Return JSON only: {{"slides":[{{"slide_number":1,"recipe":"...","visual_direction":"..."}}]}}.
+Return JSON only: {{"slides":[{{"slide_number":1,"recipe":"...","visual_direction":"...","visual_variant":"...","background_treatment":"..."}}]}}.
 Allowed recipes: cover, split, compare, evidence, flow, layers, insight, grid, close, section.
-Rules: slide 1 must use cover; the final slide must use close. Vary adjacent recipes. Prefer compare for direct criteria, flow for a sequence, layers for a system, evidence for quantified proof, split for a decision, and insight for a single strong claim. Avoid grid unless the content truly needs several peer ideas. visual_direction is a short instruction for an editable native visual, not a list of boxes.'''
+Allowed visual variants: editorial_cover, chevron_flow, cycle_loop, layer_stack, isometric_stack, comparison_table, split_decision, metric_dashboard, editorial_insight, image_story, summary_blueprint, section_break.
+Allowed background treatments: halo, blueprint, diagonal, spotlight, clean.
+Rules: slide 1 must use cover; the final slide must use close. Vary adjacent recipes. Prefer compare for direct criteria, flow for a sequence, layers for a system, evidence for quantified proof, split for a decision, and insight for a single strong claim. Use cycle_loop only for repeated feedback; use isometric_stack only for a true architecture hierarchy. Keep background treatments subtle and vary them only when they reinforce the visual role. visual_direction is a short instruction for an editable native visual, not a list of boxes.'''
         try:
             max_tokens=min(700, get_settings().gemini_max_output_tokens) if provider=="gemini" else 700
             response=_DesignResponse.model_validate(
@@ -116,6 +139,8 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
                 "transition":recipe.transition,
                 "motion_sequence":list(recipe.motion_sequence),
                 "visual_direction":choice.visual_direction if choice else recipe.visual_priority,
+                "visual_variant":choice.visual_variant if choice else self._default_variant(recipe),
+                "background_treatment":choice.background_treatment if choice else self._default_background(recipe),
             })
             decisions.append(DesignDecision(
                 slide_number=slide.slide_number, layout=recipe.layout,
@@ -123,6 +148,8 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
                 visual_priority=recipe.visual_priority, native_transition=recipe.transition,
                 motion_sequence=list(recipe.motion_sequence),
                 visual_direction=choice.visual_direction if choice else recipe.visual_priority,
+                visual_variant=choice.visual_variant if choice else self._default_variant(recipe),
+                background_treatment=choice.background_treatment if choice else self._default_background(recipe),
             ))
             previous_composition=recipe.composition
         return DesignPlan(decisions=decisions, source="model" if choices else "deterministic")

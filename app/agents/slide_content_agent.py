@@ -43,11 +43,12 @@ Slide {slide.slide_number} of {request.slide_count}
 Story role: {beat.stage}
 Story intent: {beat.intent}
 Preferred composition: {beat.preferred_recipe}
+Visual asset rule: {"Set image_required to true for this cover and provide a precise Unsplash stock_query." if slide.slide_number == 1 else "Set image_required to true only when a real photograph materially improves this slide; otherwise use false."}
 
 Return one valid JSON object only. It must include title, subtitle, layout_type, purpose, elements, and visual_spec. Each element must include type, heading, and body. visual_spec must include icon_concept, image_required, image_prompt, and stock_query.
 
 Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architecture_layers, comparison, timeline, process_flow, dashboard, two_column, key_metrics, summary, content_with_visual.
-Use zero or one element for the title slide, and 2–3 elements for other slides (four only for comparisons). Keep headings under 42 characters and bodies under 120 characters.'''
+Use zero or one element for the title slide, and 2–3 elements for other slides (four only for comparisons). Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context".'''
             max_tokens=get_settings().gemini_max_output_tokens if provider == "gemini" else 1200
             generated=gateway.generate_json(prompt, max_tokens=max_tokens, temperature=.1)
             # The Storyline and Design agents own layout selection. Models

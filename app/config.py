@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     ollama_model: str = ""
     ollama_fallback_enabled: bool = False
     ollama_debug_responses: bool = False
-    image_provider: str = "none"  # "openai" enables topic-specific raster visuals
+    image_provider: str = "unsplash"  # Uses Unsplash when an access key is configured.
     image_base_url: str = "https://api.openai.com/v1"
     image_api_key: str = ""
     image_model: str = "gpt-image-1"
