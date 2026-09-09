@@ -4,6 +4,7 @@ from app.schemas.presentation import CreatePresentationRequest
 from app.agents.orchestrator import PresentationOrchestrator, auto_theme_for_topic
 from app.agents.storyline_agent import StorylineAgent
 from app.agents.brief_agent import BriefInterpreterAgent
+from app.agents.slide_content_agent import SlideContentAgent
 from app.rendering.pptx_builder import build_presentation
 from app.agents.qa_agent import PresentationQAAgent, summarize_point
 from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
@@ -146,8 +147,60 @@ Post-Mortem Audit (updating tickets)'''
     brief=BriefInterpreterAgent().interpret(prompt, 3)
     assert brief.is_structured and brief.by_number(2).layout_type == LayoutType.feature_grid
     assert len(brief.by_number(2).requirements) == 4
-    spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic=prompt, slide_count=3))
+    # The UI can still be on its six-slide default; explicit Slide 1–3
+    # instructions are the authoritative deck contract.
+    spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic=prompt, slide_count=6))
+    assert len(spec.slides) == 3
     assert spec.slides[0].title == "Autonomous Alert Triage Platform"
     assert spec.slides[1].layout_type == LayoutType.feature_grid
     assert len(spec.slides[1].elements) == 4
     assert spec.slides[2].layout_type == LayoutType.step_workflow
+
+def test_design_director_keeps_explicit_feature_grid_recipe():
+    spec=PresentationSpec(title="Impact", topic="SOC impact", slides=[
+        SlideSpec(slide_number=1, title="Cover", purpose="Start", layout_type=LayoutType.title_slide),
+        SlideSpec(slide_number=2, title="Three metrics", purpose="Evidence", layout_type=LayoutType.feature_grid, metadata={"brief_layout_locked":True}),
+        SlideSpec(slide_number=3, title="Locked metrics", purpose="End", layout_type=LayoutType.feature_grid, metadata={"brief_layout_locked":True}),
+    ])
+    DesignDirectorAgent().apply(spec)
+    assert spec.slides[1].visual_spec["composition"] == "editorial insight grid"
+    assert spec.slides[2].visual_spec["composition"] == "editorial insight grid"
+
+def test_brief_classifier_distinguishes_structured_and_open_ended_prompts():
+    agent=BriefInterpreterAgent()
+    structured=agent.classify("Slide 1: Cover\nTitle: A platform\nSlide 2: Workflow\nLayout: Step Workflow")
+    generic=agent.classify("Explain how an agentic AI security platform improves SOC operations.")
+    assert structured.mode == "structured"
+    assert structured.detected_slide_numbers == [1, 2]
+    assert generic.mode == "open_ended"
+
+def test_brief_interpreter_protects_embedded_json_slide_schema():
+    prompt='''Use this JSON schema:
+    {"title":"Agentic AI Alert Response Platform","slides":[
+      {"slide_number":1,"title":"Autonomous Alert Triage Platform","subtitle":"Transforming SOC Operations","layout_type":"title_slide","elements":[]},
+      {"slide_number":2,"title":"Platform Core Capabilities","layout_type":"feature_grid","elements":[
+        {"id":"e1","heading":"Context Enrichment","subtext":"Correlate SIEM telemetry."},
+        {"id":"e2","heading":"Investigation Plans","subtext":"Generate triage paths."},
+        {"id":"e3","heading":"Approval Safeguards","subtext":"Gate high-risk actions."},
+        {"id":"e4","heading":"Self-Healing Playbooks","subtext":"Learn from incidents."}]},
+      {"slide_number":3,"title":"Response Pipeline","layout_type":"step_workflow","elements":[]},
+      {"slide_number":4,"title":"Architecture Layers","layout_type":"architecture_layers","elements":[]},
+      {"slide_number":5,"title":"Strategic SOC Impact","layout_type":"feature_grid","elements":[]}
+    ]}'''
+    agent=BriefInterpreterAgent()
+    brief=agent.interpret(prompt, 6)
+    assert agent.classify(prompt).mode == "structured"
+    assert brief.deck_title == "Agentic AI Alert Response Platform"
+    assert len(brief.slides) == 5
+    assert brief.by_number(2).elements[0].body == "Correlate SIEM telemetry."
+    spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic=prompt, slide_count=6))
+    assert len(spec.slides) == 5
+    assert spec.title == "Agentic AI Alert Response Platform"
+    assert len(spec.slides[1].elements) == 4
+
+def test_slide_content_contract_restores_items_missing_from_model_response():
+    brief=BriefInterpreterAgent().interpret('''{"slides":[{"slide_number":1,"title":"Capabilities","layout_type":"feature_grid","elements":[{"heading":"Context","subtext":"Correlate telemetry."},{"heading":"Containment","subtext":"Isolate endpoints."}]}]}''', 1)
+    directive=brief.by_number(1)
+    restored=SlideContentAgent._preserve_contract_elements(directive, {"elements":[{"heading":"Context","body":"Model-expanded context."}]})
+    assert [item["heading"] for item in restored] == ["Context", "Containment"]
+    assert restored[0]["body"] == "Model-expanded context."

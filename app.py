@@ -19,8 +19,9 @@ except httpx.HTTPError:
     st.error("Could not verify testing access. Start the API and try again.")
     st.stop()
 with st.sidebar:
-    # Every visible option maps to an implemented generation provider.
-    provider=st.selectbox("Provider",["Gemini","NVIDIA","Ollama"]); model=st.text_input("Model (optional)")
+    # Local Ollama remains an opt-in server-side contingency only. Users choose
+    # between the two supported cloud agent sources.
+    provider=st.selectbox("Provider",["Gemini","NVIDIA"]); model=st.text_input("Model (optional)")
     theme=st.selectbox("Theme",["Auto","Cyber Dark","Minimalist White","Corporate Blue"]); count=st.slider("Slides",3,10,6)
     audience=st.text_input("Audience","General audience"); tone=st.selectbox("Tone",["Professional","Executive","Educational","Persuasive"])
     include_images=st.checkbox("Use topic-specific Unsplash visuals",value=True,help="Uses Unsplash when configured; at most three visuals per deck. Native editable visuals remain the fallback.")
@@ -46,7 +47,7 @@ with st.sidebar:
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy")
 if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
     try:
-        if provider in {"NVIDIA", "Gemini", "Ollama"}:
+        if provider in {"NVIDIA", "Gemini"}:
             provider_id=provider.lower()
             check=httpx.get(f"{API}/api/llm/status",params={"provider":provider_id,"model":model or None},headers=ACCESS_HEADERS,timeout=45)
             if check.status_code != 200:
@@ -75,8 +76,8 @@ if job:=st.session_state.get("job"):
                 st.warning(f"{source} failed during generation; this deck was built with the deterministic fallback. Reason: {reason}")
             elif generation_provider in {"nvidia", "gemini"}:
                 st.caption(f"Generated with {generation_provider.title()} ({generation_metadata.get('generation_model')}).")
-            elif generation_provider == "ollama": st.caption(f"Generated locally with Ollama ({generation_metadata.get('generation_model')}).")
-            elif generation_provider == "ollama_fallback": st.caption(f"The selected cloud provider was unavailable; generated locally with Ollama ({generation_metadata.get('generation_model')}).")
+            elif generation_provider in {"ollama", "ollama_fallback"}:
+                st.caption("The selected cloud source was unavailable; the server completed the deck using its configured contingency.")
             if expires_at:=deck["spec"].get("metadata",{}).get("file_expires_at"): st.caption(f"Generated files expire: {expires_at}")
             preview_spec=PresentationSpec.model_validate(deck["spec"])
             preview_key=f"preview_slide_{job['presentation_id']}"
@@ -96,15 +97,18 @@ if job:=st.session_state.get("job"):
             )
             if st.button("Apply slide adjustment",type="primary",disabled=not slide_instruction.strip(),key=f"edit_{job['presentation_id']}_{selected}"):
                 try:
-                    edit=httpx.post(
-                        f"{API}/api/presentations/{job['presentation_id']}/slides/{selected}/edit",
-                        # An AI-backed edit can take longer than the former
-                        # 30-second client deadline, then still complete on
-                        # the server. Keep the request open through provider
-                        # generation and PPTX rendering.
-                        params={"instruction":slide_instruction.strip()},headers=ACCESS_HEADERS,timeout=180,
-                    )
-                    edit.raise_for_status()
+                    with st.status(f"Slide {selected}: processing adjustment…", expanded=True) as edit_status:
+                        st.write("Updating content, applying layout QA, and rebuilding the editable PPTX.")
+                        edit=httpx.post(
+                            f"{API}/api/presentations/{job['presentation_id']}/slides/{selected}/edit",
+                            # An AI-backed edit can take longer than the former
+                            # 30-second client deadline, then still complete on
+                            # the server. Keep the request open through provider
+                            # generation and PPTX rendering.
+                            params={"instruction":slide_instruction.strip()},headers=ACCESS_HEADERS,timeout=180,
+                        )
+                        edit.raise_for_status()
+                        edit_status.update(label=f"Slide {selected}: completed", state="complete", expanded=False)
                     st.success(f"Slide {selected} updated. The preview and PPTX now use version {edit.json()['version_number']}.")
                     st.rerun()
                 except httpx.TimeoutException:

@@ -7,6 +7,8 @@ provider outage cannot turn a carefully authored brief into generic slides.
 from __future__ import annotations
 
 import re
+import json
+from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.schemas.presentation import LayoutType, SlideElement, SlideSpec
@@ -32,13 +34,15 @@ class BriefSlide(BaseModel):
     subtitle: str | None = None
     layout_type: LayoutType
     requirements: list[str] = Field(default_factory=list)
+    elements: list[SlideElement] = Field(default_factory=list)
 
     def seed(self) -> SlideSpec:
-        elements=[]
-        for item in self.requirements:
-            heading, separator, detail=item.partition(" (")
-            body=detail.rstrip("). ") if separator else f"Explain {heading.strip()} in practical terms."
-            elements.append(SlideElement(type="card", heading=heading.strip(), body=body))
+        elements=[element.model_copy(deep=True) for element in self.elements]
+        if not elements:
+            for item in self.requirements:
+                heading, separator, detail=item.partition(" (")
+                body=detail.rstrip("). ") if separator else f"Explain {heading.strip()} in practical terms."
+                elements.append(SlideElement(type="card", heading=heading.strip(), body=body))
         purpose=(f"Explain {self.title} through the requested technical details."
                  if elements else f"Introduce {self.title}.")
         return SlideSpec(
@@ -51,6 +55,7 @@ class BriefSlide(BaseModel):
 
 class PresentationBrief(BaseModel):
     slides: list[BriefSlide] = Field(default_factory=list)
+    deck_title: str | None = None
 
     @property
     def is_structured(self) -> bool:
@@ -60,8 +65,61 @@ class PresentationBrief(BaseModel):
         return next((slide for slide in self.slides if slide.slide_number == number), None)
 
 
+class PromptClassification(BaseModel):
+    mode: Literal["structured", "open_ended"]
+    reason: str
+    detected_slide_numbers: list[int] = Field(default_factory=list)
+
+
 class BriefInterpreterAgent:
     """Extract `Slide N:` contracts and their requested content from a prompt."""
+
+    def classify(self, prompt: str) -> PromptClassification:
+        numbers=[int(number) for number in re.findall(r"(?im)^\s*slide\s+(\d+)\s*:", prompt)]
+        fields=re.findall(r"(?im)^\s*(?:title|subtitle|layout|topic areas|steps to cover|tiers to cover|key outcomes)\s*:", prompt)
+        if '"slides"' in prompt and '"slide_number"' in prompt:
+            return PromptClassification(
+                mode="structured",
+                reason="Detected an embedded JSON slide specification with explicit slide numbers and layouts.",
+                detected_slide_numbers=[int(number) for number in re.findall(r'"slide_number"\s*:\s*(\d+)', prompt)],
+            )
+        if numbers and (fields or len(numbers) >= 2):
+            return PromptClassification(
+                mode="structured",
+                reason="Detected numbered slide contracts with explicit title, layout, or content requirements.",
+                detected_slide_numbers=numbers,
+            )
+        return PromptClassification(
+            mode="open_ended",
+            reason="No complete slide-by-slide contract was supplied; the storyline and design agents may plan the deck.",
+        )
+
+    @staticmethod
+    def _embedded_json(prompt: str) -> dict | None:
+        """Find the first balanced JSON object that declares a slides array."""
+        start=prompt.find("{")
+        while start >= 0:
+            depth=0; in_string=False; escaped=False
+            for end, char in enumerate(prompt[start:], start=start):
+                if in_string:
+                    if escaped: escaped=False
+                    elif char == "\\": escaped=True
+                    elif char == '"': in_string=False
+                    continue
+                if char == '"': in_string=True
+                elif char == "{": depth+=1
+                elif char == "}":
+                    depth-=1
+                    if depth == 0:
+                        try:
+                            candidate=json.loads(prompt[start:end+1])
+                            if isinstance(candidate, dict) and isinstance(candidate.get("slides"), list):
+                                return candidate
+                        except json.JSONDecodeError:
+                            pass
+                        break
+            start=prompt.find("{", start+1)
+        return None
 
     @staticmethod
     def _lines_after(section: str, marker: str) -> list[str]:
@@ -77,6 +135,33 @@ class BriefInterpreterAgent:
         return [line for line in lines if line and not line.lower().startswith(("ensure ", "please "))]
 
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
+        if self.classify(prompt).mode != "structured":
+            return PresentationBrief()
+        payload=self._embedded_json(prompt)
+        if payload:
+            slides=[]
+            for raw in payload.get("slides", []):
+                try:
+                    number=int(raw["slide_number"])
+                    layout=LayoutType(raw["layout_type"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                raw_elements=[]
+                for element in raw.get("elements", []):
+                    if not isinstance(element, dict):
+                        continue
+                    raw_elements.append(SlideElement.model_validate({
+                        **element, "type":element.get("type", "card"),
+                        "body":element.get("body") or element.get("subtext"),
+                    }))
+                requirements=[item.heading or item.label or "" for item in raw_elements if item.heading or item.label]
+                slides.append(BriefSlide(
+                    slide_number=number, title=str(raw.get("title") or f"Slide {number}"),
+                    subtitle=raw.get("subtitle"), layout_type=layout,
+                    requirements=requirements, elements=raw_elements,
+                ))
+            if slides:
+                return PresentationBrief(slides=slides, deck_title=payload.get("title"))
         sections=list(re.finditer(r"(?im)^\s*slide\s+(\d+)\s*:\s*([^\n]+)", prompt))
         slides=[]
         for index, match in enumerate(sections):

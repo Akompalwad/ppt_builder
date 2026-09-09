@@ -59,6 +59,24 @@ class DesignDirectorAgent:
         return RECIPES["grid"]
 
     @staticmethod
+    def _recipe_for_explicit_layout(layout: LayoutType) -> LayoutRecipe:
+        """Translate a locked user layout into its matching composition.
+
+        A prompt asking for a Feature Grid must not be silently rendered as a
+        metrics dashboard just because its content contains numbers.
+        """
+        mapping={
+            LayoutType.title_slide:"cover", LayoutType.section_slide:"section",
+            LayoutType.feature_grid:"grid", LayoutType.step_workflow:"flow",
+            LayoutType.process_flow:"flow", LayoutType.architecture_layers:"layers",
+            LayoutType.comparison:"compare", LayoutType.two_column:"split",
+            LayoutType.key_metrics:"evidence", LayoutType.dashboard:"evidence",
+            LayoutType.summary:"close", LayoutType.timeline:"flow",
+            LayoutType.content_with_visual:"insight",
+        }
+        return RECIPES[mapping[layout]]
+
+    @staticmethod
     def _default_variant(recipe: LayoutRecipe) -> str:
         return {
             "cover":"editorial_cover", "split":"split_decision", "compare":"comparison_table",
@@ -110,7 +128,9 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
         decisions=[]; previous_composition: str | None=None
         for index, slide in enumerate(spec.slides):
             title=(slide.title+" "+slide.purpose).lower()
-            if index==0:
+            if slide.metadata.get("brief_layout_locked"):
+                recipe=self._recipe_for_explicit_layout(slide.layout_type)
+            elif index==0:
                 recipe=RECIPES["cover"]
             elif index==len(spec.slides)-1:
                 recipe=RECIPES["close"]
@@ -128,7 +148,7 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
 
             # A sequence of generic grids is the usual cause of a template-like
             # deck. Switch the later duplicate into an asymmetric editorial slide.
-            if recipe.composition==previous_composition and recipe.name in {"grid", "insight"}:
+            if not slide.metadata.get("brief_layout_locked") and recipe.composition==previous_composition and recipe.name in {"grid", "insight"}:
                 recipe=RECIPES["insight"] if recipe.name=="grid" else RECIPES["grid"]
 
             # Explicit layout requests in a detailed user brief are a contract,

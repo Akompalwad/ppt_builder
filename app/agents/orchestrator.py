@@ -63,7 +63,17 @@ class PresentationOrchestrator:
         def stage(name, value):
             if progress: progress(name, value)
         stage("RESEARCHING", 15); topic=request.topic.strip(); title=_clean_model_copy(topic,52).rstrip(".")
-        brief=BriefInterpreterAgent().interpret(topic, request.slide_count)
+        brief_agent=BriefInterpreterAgent()
+        prompt_classification=brief_agent.classify(topic)
+        brief=brief_agent.interpret(topic, request.slide_count)
+        if brief.deck_title:
+            title=_clean_model_copy(brief.deck_title,52).rstrip(".")
+        # A structured prompt is a stronger instruction than the UI's default
+        # slider.  It is especially important when the slider still says six
+        # but the prompt explicitly defines "Slide 1" through "Slide 5".
+        if brief.is_structured:
+            requested_brief_count=max(slide.slide_number for slide in brief.slides)
+            request=request.model_copy(update={"slide_count":requested_brief_count})
         selected_provider=(request.provider or "").lower()
         if selected_provider in {"nvidia", "gemini", "ollama"}:
             try:
@@ -77,7 +87,9 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 # unnecessarily slow and prone to timing out on reasoning models.
                 token_budget=max(1800, min(4000, request.slide_count * 550 + 600))
                 settings=get_settings()
-                slide_by_slide=selected_provider in {"gemini", "ollama"} or settings.nvidia_slide_by_slide_enabled
+                # A structured brief always uses one canonical model call per
+                # slide: a full-deck call could silently omit its contracts.
+                slide_by_slide=brief.is_structured or selected_provider in {"gemini", "ollama"} or settings.nvidia_slide_by_slide_enabled
                 if slide_by_slide:
                     spec=SlideContentAgent().generate(request, resolved_theme.name, StorylineAgent(), provider=selected_provider, brief=brief)
                     spec.design_system=resolved_theme
@@ -95,6 +107,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 spec.metadata["generation_provider"]=selected_provider
                 spec.metadata["generation_model"]=request.model or "configured default"
                 spec.metadata["agent_trace"]=[
+                    trace("Brief Classification Agent", "completed", "Classified the request before generation routing.", prompt_classification.model_dump()),
                     trace(
                         "Slide Content Agent" if slide_by_slide else "Content & Storyline Agent",
                         "completed",
@@ -135,6 +148,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                         spec.metadata["generation_model"]=settings.ollama_model
                         spec.metadata["provider_fallback_reason"]=fallback_reason
                         spec.metadata["agent_trace"]=[
+                            trace("Brief Classification Agent", "completed", "Classified the request before generation routing.", prompt_classification.model_dump()),
                             trace(f"{selected_provider.title()} Content Agent", "fallback", f"{selected_provider.title()} did not produce a usable structured deck; local Ollama continued the job.", {"reason":fallback_reason}),
                             trace("Local Ollama Content Agent", "completed", "Generated one validated canonical slide per request locally.", {"model":settings.ollama_model, "slide_count":len(spec.slides), "ollama_requests":len(spec.slides)}),
                             trace("Storyline Agent", "completed", "Assigned a narrative role to every slide before visual composition.", storyline_plan.model_dump()),
@@ -191,7 +205,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
             spec.metadata["provider_fallback_from"]=selected_provider
         spec.metadata["agent_trace"]=[
             trace("Content Research Agent","completed","Extracted the topic, audience, and requested tone.",{"topic":topic,"audience":request.audience,"tone":request.tone}),
-            trace("Brief Interpreter Agent", "completed", "Converted explicit slide instructions into protected content and layout contracts.", {"structured":brief.is_structured, "locked_slides":[slide.slide_number for slide in brief.slides]}),
+            trace("Brief Classification Agent", "completed", "Classified the request before generation routing.", prompt_classification.model_dump()),
+            trace("Brief Interpreter Agent", "completed", "Converted explicit slide instructions into protected content and layout contracts.", {"structured":brief.is_structured, "locked_slides":[slide.slide_number for slide in brief.slides], "resolved_slide_count":request.slide_count}),
             trace("Content Validation Agent","completed","Applied concise, presentation-safe deterministic copy.",{"content_policy":"three concise decision-oriented points per content slide"}),
             trace("Storyline Agent","completed","Assigned a varied narrative arc before slide layouts were selected.",storyline_plan.model_dump()),
             trace("Theme Agent","completed","Resolved the selected theme into deterministic design tokens.",{"theme":theme.name,"primary_color":theme.primary_color}),

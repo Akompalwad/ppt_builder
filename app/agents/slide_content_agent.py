@@ -9,6 +9,27 @@ from app.schemas.presentation import CreatePresentationRequest, LayoutType, Pres
 class SlideContentAgent:
     """Keeps each NVIDIA completion small enough to avoid deck-wide timeouts."""
 
+    @staticmethod
+    def _preserve_contract_elements(directive, generated: dict) -> list[dict]:
+        """Keep every explicitly requested item if a model returns a partial slide."""
+        required=directive.seed().elements
+        returned={
+            (item.get("heading") or item.get("label") or "").strip().lower(): item
+            for item in generated.get("elements", []) if isinstance(item, dict)
+        }
+        preserved=[]
+        for element in required:
+            key=(element.heading or element.label or "").strip().lower()
+            candidate=returned.get(key, {})
+            # IDs, headings, and the user's seed detail are authoritative;
+            # the cloud agent may improve the explanatory copy only.
+            merged=element.model_dump()
+            for field in ("body", "subtext", "value", "label"):
+                if candidate.get(field):
+                    merged[field]=candidate[field]
+            preserved.append(merged)
+        return preserved
+
     def generate(
         self,
         request: CreatePresentationRequest,
@@ -60,6 +81,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
 Use zero or one element for the title slide, and 2–3 elements for other slides (four only for comparisons). Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context".'''
             max_tokens=get_settings().gemini_max_output_tokens if provider == "gemini" else 1200
             generated=gateway.generate_json(prompt, max_tokens=max_tokens, temperature=.1)
+            if directive and (directive.elements or directive.requirements):
+                generated["elements"]=self._preserve_contract_elements(directive, generated)
             # The Storyline and Design agents own layout selection. Models
             # occasionally echo the JSON-schema placeholder ("...") for this
             # field, which should never invalidate otherwise usable content.
