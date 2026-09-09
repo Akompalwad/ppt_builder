@@ -80,6 +80,53 @@ class PresentationService:
         with SessionLocal() as db:
             j=db.get(GenerationJob,job_id); user=self._user(db,session_id); presentation=db.get(Presentation,j.presentation_id) if j else None
             return None if not j or not presentation or presentation.user_id != user.id else {"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message}
+    def create_slide_edit(self,presentation_id:str,slide_number:int,instruction:str,session_id:str) -> str:
+        """Queue an isolated edit without making the existing deck unavailable."""
+        with SessionLocal() as db:
+            presentation=db.get(Presentation,presentation_id); user=self._user(db,session_id)
+            if not presentation or presentation.user_id != user.id or not presentation.current_version_id:
+                raise LookupError("Presentation not found")
+            current=db.get(PresentationVersion,presentation.current_version_id)
+            if not current or not 1 <= slide_number <= len(PresentationSpec.model_validate(current.spec_json).slides):
+                raise IndexError("Slide not found")
+            job=GenerationJob(
+                presentation_id=presentation_id,
+                job_type="slide_edit",
+                current_stage=f"Slide {slide_number} edit queued",
+            )
+            db.add(job); db.commit()
+            return job.id
+
+    def generate_slide_edit(self,presentation_id:str,job_id:str,slide_number:int,instruction:str):
+        """Run one slide through content, QA, and PPTX stages as a tracked job."""
+        queue=shared_generation_queue(get_settings().generation_max_concurrent_jobs)
+        with queue.slot(job_id):
+            with SessionLocal() as db:
+                job=db.get(GenerationJob,job_id); presentation=db.get(Presentation,presentation_id)
+                if not job or not presentation:
+                    return
+                def progress(stage:str,value:int):
+                    job.current_stage=stage; job.progress=value; job.status="RUNNING"; db.commit()
+                try:
+                    current=db.get(PresentationVersion,presentation.current_version_id)
+                    spec=PresentationSpec.model_validate(current.spec_json)
+                    progress(f"Slide Content Agent — rewriting slide {slide_number}",28)
+                    updated=PresentationOrchestrator().edit_slide(spec,slide_number,instruction)
+                    progress("Presentation QA Agent — checking edited slide",68)
+                    PresentationQAAgent().validate_and_recompose(updated)
+                    number=(db.scalar(select(PresentationVersion.version_number).where(PresentationVersion.presentation_id==presentation_id).order_by(PresentationVersion.version_number.desc())) or 0)+1
+                    updated.metadata["file_expires_at"]=schedule_expiry(presentation_id)
+                    updated.metadata["last_slide_edit"]={"slide_number":slide_number,"version_number":number,"status":"completed"}
+                    version=PresentationVersion(presentation_id=presentation_id,version_number=number,spec_json=updated.model_dump(mode="json"),generated_by="slide_edit")
+                    db.add(version); db.flush(); presentation.current_version_id=version.id
+                    progress("PPTX Renderer — rebuilding editable presentation",90)
+                    file=get_settings().local_storage_path/presentation_id/"versions"/str(number)/"presentation.pptx"
+                    build_presentation(updated,file)
+                    job.status="COMPLETED"; job.progress=100; job.current_stage=f"Slide {slide_number} updated"; db.commit()
+                except Exception:
+                    job.status="FAILED"; job.error_message="The slide adjustment could not be applied."; db.commit()
+                    raise
+
     def edit(self,presentation_id:str,slide_number:int,instruction:str,session_id: str):
         with SessionLocal() as db:
             p=db.get(Presentation,presentation_id); user=self._user(db,session_id)

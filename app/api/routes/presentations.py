@@ -23,8 +23,11 @@ def status(presentation_id:str, session_id: str = Depends(require_active_session
     if not result: raise HTTPException(404,"Presentation not found")
     return {k:result[k] for k in ("id","status","current_version_id")}
 @router.post("/{presentation_id}/slides/{slide_number}/edit")
-def edit(presentation_id:str,slide_number:int,instruction:str, session_id: str = Depends(require_active_session)):
-    try: spec,number=service.edit(presentation_id,slide_number,instruction,session_id); return {"version_number":number,"slide":spec.slides[slide_number-1]}
+def edit(presentation_id:str,slide_number:int,instruction:str,tasks:BackgroundTasks, session_id: str = Depends(require_active_session)):
+    try:
+        job_id=service.create_slide_edit(presentation_id,slide_number,instruction,session_id)
+        tasks.add_task(service.generate_slide_edit,presentation_id,job_id,slide_number,instruction)
+        return {"job_id":job_id,"presentation_id":presentation_id,"slide_number":slide_number,"status":"QUEUED"}
     except (AttributeError,IndexError,LookupError): raise HTTPException(404,"Presentation or slide not found")
 @router.get("/{presentation_id}/download")
 def download(presentation_id:str, session_id: str = Depends(require_active_session)):

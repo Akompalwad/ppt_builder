@@ -15,14 +15,7 @@ def about_slideweaver():
     st.link_button("Open developer profile", "https://github.com/Akompalwad", use_container_width=True)
     st.link_button("Open project repository", PROJECT_GITHUB_URL, use_container_width=True)
 
-title_column, about_column, github_column=st.columns([5,1,1])
-with title_column:
-    st.title("SlideWeaver")
-with about_column:
-    if st.button("About", use_container_width=True):
-        about_slideweaver()
-with github_column:
-    st.link_button("View on GitHub",PROJECT_GITHUB_URL,use_container_width=True)
+st.title("SlideWeaver")
 st.caption("Professional, editable presentations — generated asynchronously.")
 st.caption("Testing mode: presentation history is tied to this browser session until Google sign-in is enabled.")
 if "access_session_id" not in st.session_state:
@@ -76,6 +69,10 @@ except httpx.HTTPError:
     st.error("Could not verify testing access. Start the API and try again.")
     st.stop()
 with st.sidebar:
+    if st.button("About SlideWeaver", use_container_width=True):
+        about_slideweaver()
+    st.link_button("View on GitHub", PROJECT_GITHUB_URL, use_container_width=True)
+    st.divider()
     # Local Ollama remains an opt-in server-side contingency only. Users choose
     # between the two supported cloud agent sources.
     provider=st.selectbox("Provider",["Gemini","NVIDIA"])
@@ -164,29 +161,44 @@ if job:=st.session_state.get("job"):
             st.caption(f"Slide {selected}: {preview_spec.slides[selected-1].title}")
             components.html(render_slide_html(preview_spec,selected),height=630,scrolling=False)
             st.subheader(f"Edit slide {selected}")
+            edit_job_key=f"slide_edit_job_{job['presentation_id']}"
+            completed_notice_key=f"slide_edit_notice_{job['presentation_id']}"
+            if notice:=st.session_state.pop(completed_notice_key,None):
+                st.success(notice)
+            pending_edit=st.session_state.get(edit_job_key)
+            if pending_edit:
+                try:
+                    edit_job=httpx.get(f"{API}/api/jobs/{pending_edit['job_id']}",headers=ACCESS_HEADERS,timeout=5).json()
+                    if edit_job["status"] == "COMPLETED":
+                        st.session_state.pop(edit_job_key,None)
+                        st.session_state[preview_key]=pending_edit["slide_number"]
+                        st.session_state[completed_notice_key]=f"Slide {pending_edit['slide_number']} updated. The live preview and editable PPTX now use the new version."
+                        st.rerun()
+                    if edit_job["status"] == "FAILED":
+                        st.session_state.pop(edit_job_key,None)
+                        st.error(edit_job.get("error_message") or "The slide adjustment could not be applied.")
+                    else:
+                        st.info(f"Editing slide {pending_edit['slide_number']}: {edit_job['current_stage']}")
+                        st.progress(edit_job["progress"], text=edit_job["current_stage"])
+                        st.caption("The existing preview remains available until the updated version is ready.")
+                        time.sleep(2)
+                        st.rerun()
+                except (httpx.HTTPError, KeyError, ValueError):
+                    st.warning("Checking the slide edit status…")
             slide_instruction=st.text_area(
                 "Describe the correction or adjustment",
                 placeholder="Example: Shorten the title, make the comparison clearer, and use an architecture diagram.",
                 key=f"slide_instruction_{job['presentation_id']}_{selected}",
             )
-            if st.button("Apply slide adjustment",type="primary",disabled=not slide_instruction.strip(),key=f"edit_{job['presentation_id']}_{selected}"):
+            if st.button("Apply slide adjustment",type="primary",disabled=bool(pending_edit) or not slide_instruction.strip(),key=f"edit_{job['presentation_id']}_{selected}"):
                 try:
-                    with st.status(f"Slide {selected}: processing adjustment…", expanded=True) as edit_status:
-                        st.write("Updating content, applying layout QA, and rebuilding the editable PPTX.")
-                        edit=httpx.post(
-                            f"{API}/api/presentations/{job['presentation_id']}/slides/{selected}/edit",
-                            # An AI-backed edit can take longer than the former
-                            # 30-second client deadline, then still complete on
-                            # the server. Keep the request open through provider
-                            # generation and PPTX rendering.
-                            params={"instruction":slide_instruction.strip()},headers=ACCESS_HEADERS,timeout=180,
-                        )
-                        edit.raise_for_status()
-                        edit_status.update(label=f"Slide {selected}: completed", state="complete", expanded=False)
-                    st.success(f"Slide {selected} updated. The preview and PPTX now use version {edit.json()['version_number']}.")
+                    edit=httpx.post(
+                        f"{API}/api/presentations/{job['presentation_id']}/slides/{selected}/edit",
+                        params={"instruction":slide_instruction.strip()},headers=ACCESS_HEADERS,timeout=10,
+                    )
+                    edit.raise_for_status()
+                    st.session_state[edit_job_key]={"job_id":edit.json()["job_id"],"slide_number":selected}
                     st.rerun()
-                except httpx.TimeoutException:
-                    st.warning("The adjustment is still being processed. Refresh this deck in a moment; do not submit it again yet.")
                 except httpx.HTTPStatusError as exc:
                     detail=exc.response.text[:300] or f"HTTP {exc.response.status_code}"
                     st.error(f"The slide adjustment was rejected: {detail}")
