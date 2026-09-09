@@ -290,7 +290,7 @@ def test_web_preview_matches_pptx_two_by_two_feature_grid():
     assert "grid-template-columns:repeat(2,1fr)" in rendered
     assert "max-width:1120px" in rendered
 
-def test_chevron_flow_keeps_step_explanations_inside_the_chevrons(tmp_path):
+def test_chevron_flow_keeps_step_explanations_inside_connected_stages(tmp_path):
     spec=PresentationSpec(title="Workflow", topic="Workflow", slides=[SlideSpec(
         slide_number=1, title="Generation workflow", purpose="Show the sequence.", layout_type=LayoutType.process_flow,
         visual_spec={"visual_variant":"chevron_flow"},
@@ -339,7 +339,7 @@ def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
     assert any(shape.has_chart for shape in presentation.slides[0].shapes)
     assert "native-chart-preview" in render_slide_html(spec, 1)
 
-def test_chevron_flow_places_step_details_inside_enlarged_chevrons(tmp_path):
+def test_chevron_flow_places_step_details_inside_connected_stages(tmp_path):
     spec=PresentationSpec(title="Pipeline", topic="SOC", slides=[SlideSpec(
         slide_number=1, title="Incident Response Pipeline", purpose="Show the response sequence.", layout_type=LayoutType.step_workflow,
         visual_spec={"visual_variant":"chevron_flow"},
@@ -349,7 +349,7 @@ def test_chevron_flow_places_step_details_inside_enlarged_chevrons(tmp_path):
     presentation=Presentation(output)
     bodies=[shape for shape in presentation.slides[0].shapes if shape.has_text_frame and shape.text.startswith("Detailed operational")]
     assert len(bodies) == 4
-    assert all(shape.top / 914400 >= 3.8 and (shape.top+shape.height) / 914400 <= 5.5 for shape in bodies)
+    assert all(shape.top / 914400 >= 4.0 and (shape.top+shape.height) / 914400 <= 5.5 for shape in bodies)
     assert "flow-detail" not in render_slide_html(spec, 1)
 
 def test_request_accepts_a_detailed_structured_brief():

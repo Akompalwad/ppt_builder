@@ -5,7 +5,25 @@ from app.schemas.presentation import PresentationSpec
 from app.rendering.web_renderer import render_slide_html
 st.set_page_config(page_title="SlideWeaver",page_icon="▣",layout="wide")
 API=os.getenv("API_URL","http://localhost:8000")
-st.title("SlideWeaver"); st.caption("Professional, editable presentations — generated asynchronously.")
+PROJECT_GITHUB_URL="https://github.com/Akompalwad/ppt_builder"
+
+@st.dialog("About SlideWeaver")
+def about_slideweaver():
+    st.subheader("SlideWeaver")
+    st.write("An AI-assisted workspace for creating polished, editable PowerPoint presentations.")
+    st.markdown("**Developer:** [Ajay Kompalwad](https://github.com/Akompalwad)")
+    st.link_button("Open developer profile", "https://github.com/Akompalwad", use_container_width=True)
+    st.link_button("Open project repository", PROJECT_GITHUB_URL, use_container_width=True)
+
+title_column, about_column, github_column=st.columns([5,1,1])
+with title_column:
+    st.title("SlideWeaver")
+with about_column:
+    if st.button("About", use_container_width=True):
+        about_slideweaver()
+with github_column:
+    st.link_button("View on GitHub",PROJECT_GITHUB_URL,use_container_width=True)
+st.caption("Professional, editable presentations — generated asynchronously.")
 st.caption("Testing mode: presentation history is tied to this browser session until Google sign-in is enabled.")
 if "access_session_id" not in st.session_state:
     st.session_state.access_session_id=uuid.uuid4().hex

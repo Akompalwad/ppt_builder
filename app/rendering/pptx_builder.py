@@ -259,22 +259,28 @@ def workflow(slide, spec, d):
         add_text(slide,element_text(item),x+.26,stage_y+1.94,width-.52,1.10,text_size(element_text(item),15,width-.52),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
-    """A native process diagram whose enlarged chevrons contain the full step.
+    """A compact, connected process composition for an explicit workflow.
 
-    Keeping the explanation inside each stage makes the sequence easier to
-    scan and avoids a second, detached row of generic context cards.
+    Full-height chevrons look dramatic in a browser but introduce large
+    diagonal dead areas in PowerPoint and leave too little usable text space.
+    Keep the *flow* signal in small native arrow connectors and let every
+    stage use a rectangular, readable text surface instead.
     """
-    items=spec.elements[:4]; count=max(1,len(items)); gap=.10; width=(W-2*MARGIN-gap*(count-1))/count
-    arrow_y,arrow_h=2.16,3.78
+    items=spec.elements[:4]; count=max(1,len(items)); gap=.34; width=(W-2*MARGIN-gap*(count-1))/count
+    stage_y,stage_h=2.25,3.42
     for index,item in enumerate(items):
         x=MARGIN+index*(width+gap)
-        shape=add_shape(slide,MSO_AUTO_SHAPE_TYPE.CHEVRON,x,arrow_y,width,arrow_h,shade(d.surface_color,8) if index else d.primary_color,d.primary_color)
-        if index==0: shape.fill.transparency=10
-        foreground=d.background_color if index==0 else d.text_primary
-        secondary=shade(d.background_color,18) if index==0 else d.text_secondary
-        add_text(slide,f"{index+1:02d}",x+.28,arrow_y+.38,.34,.18,11,foreground,True,align=PP_ALIGN.CENTER)
-        add_text(slide,item.heading or f"Step {index+1}",x+.28,arrow_y+.82,width-.65,.64,text_size(item.heading or "",18,width-.65),foreground,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        add_text(slide,element_text(item),x+.32,arrow_y+1.78,width-.72,1.46,text_size(element_text(item),15,width-.72),secondary,align=PP_ALIGN.CENTER)
+        # A restrained top accent gives the variant its own visual language
+        # without making a dark filled card the only readable stage.
+        add_surface(slide,x,stage_y,width,stage_h,d,emphasis=index==0)
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,stage_y,width,.10,d.primary_color,d.primary_color)
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+.26,stage_y+.28,.46,.46,d.primary_color,d.primary_color)
+        add_text(slide,f"{index+1:02d}",x+.26,stage_y+.42,.46,.13,9,d.background_color,True,align=PP_ALIGN.CENTER)
+        add_text(slide,item.heading or f"Step {index+1}",x+.25,stage_y+1.02,width-.50,.68,text_size(item.heading or "",20,width-.50),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.30,stage_y+2.02,width-.60,1.02,text_size(element_text(item),15,width-.60),d.text_secondary,align=PP_ALIGN.CENTER)
+        if index<count-1:
+            arrow=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RIGHT_ARROW,x+width+.04,stage_y+stage_h/2-.16,gap-.08,.32,d.primary_color,d.primary_color)
+            arrow.line.transparency=100
 
 def cycle_loop(slide, spec, d):
     """Feedback loop diagram for recurring review, QA, and operating cycles."""
