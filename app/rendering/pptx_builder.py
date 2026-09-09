@@ -255,15 +255,22 @@ def workflow(slide, spec, d):
         add_text(slide,element_text(item),x+.08,3.72,width-.16,1.1,text_size(element_text(item),12,width-.16),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
-    """A native, editable process diagram rather than a row of cards."""
+    """A native process diagram with every step's copy in a clear boundary."""
     items=spec.elements[:4]; count=max(1,len(items)); gap=.10; width=(W-2*MARGIN-gap*(count-1))/count
+    arrow_y,arrow_h=2.22,1.22
+    detail_y,detail_h=3.70,2.06
     for index,item in enumerate(items):
         x=MARGIN+index*(width+gap)
-        shape=add_shape(slide,MSO_AUTO_SHAPE_TYPE.CHEVRON,x,2.45,width,1.15,shade(d.surface_color,8) if index else d.primary_color,d.primary_color)
+        shape=add_shape(slide,MSO_AUTO_SHAPE_TYPE.CHEVRON,x,arrow_y,width,arrow_h,shade(d.surface_color,8) if index else d.primary_color,d.primary_color)
         if index==0: shape.fill.transparency=10
-        add_text(slide,str(index+1),x+.27,2.72,.22,.18,11,d.background_color if index==0 else d.primary_color,True,align=PP_ALIGN.CENTER)
-        add_text(slide,item.heading or f"Step {index+1}",x+.56,2.68,width-.88,.28,text_size(item.heading or "",16,width-.88),d.text_primary if index else d.background_color,True,font=d.font_heading)
-        add_text(slide,element_text(item),x+.12,4.05,width-.24,1.0,text_size(element_text(item),14,width-.24),d.text_secondary,align=PP_ALIGN.CENTER)
+        add_text(slide,str(index+1),x+.26,arrow_y+.47,.22,.18,11,d.background_color if index==0 else d.primary_color,True,align=PP_ALIGN.CENTER)
+        add_text(slide,item.heading or f"Step {index+1}",x+.54,arrow_y+.40,width-.82,.36,text_size(item.heading or "",15,width-.82),d.text_primary if index else d.background_color,True,font=d.font_heading)
+        # The explanation gets its own surface rather than floating below the
+        # arrow. It gives each stage a visible reading boundary and uses the
+        # lower half of a 16:9 slide productively.
+        add_surface(slide,x,detail_y,width,detail_h,d,emphasis=index==0)
+        add_text(slide,"DETAIL",x+.20,detail_y+.22,width-.40,.16,9,d.primary_color,True)
+        add_text(slide,element_text(item),x+.20,detail_y+.57,width-.40,detail_h-.78,text_size(element_text(item),15,width-.40),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def cycle_loop(slide, spec, d):
     """Feedback loop diagram for recurring review, QA, and operating cycles."""

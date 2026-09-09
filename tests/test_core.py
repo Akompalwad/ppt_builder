@@ -247,6 +247,19 @@ def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
     assert any(shape.has_chart for shape in presentation.slides[0].shapes)
     assert "native-chart-preview" in render_slide_html(spec, 1)
 
+def test_chevron_flow_places_step_details_inside_aligned_surfaces(tmp_path):
+    spec=PresentationSpec(title="Pipeline", topic="SOC", slides=[SlideSpec(
+        slide_number=1, title="Incident Response Pipeline", purpose="Show the response sequence.", layout_type=LayoutType.step_workflow,
+        visual_spec={"visual_variant":"chevron_flow"},
+        elements=[{"heading":f"Step {index}", "body":"Detailed operational explanation for this response stage."} for index in range(1,5)],
+    )])
+    output=build_presentation(spec,tmp_path/"flow.pptx")
+    presentation=Presentation(output)
+    bodies=[shape for shape in presentation.slides[0].shapes if shape.has_text_frame and shape.text.startswith("Detailed operational")]
+    assert len(bodies) == 4
+    assert all(shape.top / 914400 >= 4.2 and (shape.top+shape.height) / 914400 <= 5.9 for shape in bodies)
+    assert "flow-detail" in render_slide_html(spec, 1)
+
 def test_request_accepts_a_detailed_structured_brief():
     request=CreatePresentationRequest(topic="{" + '"slides":[],' * 700 + "}")
     assert len(request.topic) > 2_000
