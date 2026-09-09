@@ -54,7 +54,16 @@ if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
                 st.error(f"{provider} is unavailable or the selected model is not enabled. No job was started.")
                 st.stop()
         r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":count,"theme":theme,"provider":provider.lower(),"model":model or None,"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job=r.json()
-    except httpx.HTTPError: st.error("Could not reach the API. Start it with `python api_server.py`.")
+    except httpx.HTTPStatusError as exc:
+        # A validation error (for example a malformed structured brief) is a
+        # reachable API returning useful feedback, not a connectivity failure.
+        try:
+            detail=exc.response.json().get("detail", exc.response.text)
+        except ValueError:
+            detail=exc.response.text
+        st.error(f"The API rejected this request: {detail}")
+    except httpx.HTTPError:
+        st.error("Could not reach the API. Check that the SlideWeaver API service is running.")
 if job:=st.session_state.get("job"):
     if job.get("job_id"):
         st.info(f"Generation job: {job['job_id']}")

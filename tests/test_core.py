@@ -204,3 +204,7 @@ def test_slide_content_contract_restores_items_missing_from_model_response():
     restored=SlideContentAgent._preserve_contract_elements(directive, {"elements":[{"heading":"Context","body":"Model-expanded context."}]})
     assert [item["heading"] for item in restored] == ["Context", "Containment"]
     assert restored[0]["body"] == "Model-expanded context."
+
+def test_request_accepts_a_detailed_structured_brief():
+    request=CreatePresentationRequest(topic="{" + '"slides":[],' * 700 + "}")
+    assert len(request.topic) > 2_000
