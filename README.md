@@ -41,6 +41,21 @@ turns these into protected slide contracts before the content, storyline, and
 design agents run. Explicit titles, layouts, and requested items are preserved
 even if a cloud provider is unavailable and deterministic generation is used.
 
+For an editable native chart, include explicit comparable source data in the
+slide's JSON contract. DeckForge will not invent chart values from a single
+claim or target metric:
+
+```json
+"chart_data": {
+  "type": "column",
+  "categories": ["Q1", "Q2", "Q3"],
+  "series": [{"name": "MTTR minutes", "values": [30, 18, 9]}]
+}
+```
+
+The same source data renders as an editable PowerPoint chart and as a matching
+chart in the web preview.
+
 ## Deployment
 
 `docker compose up --build` starts API, Streamlit, and Redis. For OCI ARM64, use the same compose file on an Ampere VM, front it with Nginx, and use Autonomous Database and Object Storage credentials through environment variables. Never commit `.env`.

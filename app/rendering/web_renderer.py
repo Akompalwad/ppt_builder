@@ -30,6 +30,21 @@ def image_data_url(path: str | None) -> str:
 def cards(slide: SlideSpec) -> str:
     return "".join(f'''<section class="card"><span class="index">{index+1:02d}</span><h3>{esc(item.heading or item.label or 'Key insight')}</h3><p>{body(item)}</p></section>''' for index,item in enumerate(slide.elements[:4]))
 
+def chart_markup(slide: SlideSpec) -> str:
+    """Browser equivalent of the native chart, without inventing values."""
+    raw=slide.visual_spec.get("chart_data")
+    if not isinstance(raw,dict) or not isinstance(raw.get("categories"),list) or len(raw["categories"])<2: return ""
+    series=raw.get("series")
+    if not isinstance(series,list) or not series or not isinstance(series[0],dict): return ""
+    values=series[0].get("values")
+    if not isinstance(values,list) or len(values)!=len(raw["categories"]): return ""
+    try: numeric=[float(value) for value in values]
+    except (TypeError,ValueError): return ""
+    maximum=max(numeric,default=0)
+    if maximum<=0: return ""
+    bars="".join(f"<section class='chart-bar'><span style='height:{value/maximum*100:.2f}%'></span><small>{esc(label)}</small><b>{value:g}</b></section>" for label,value in zip(raw["categories"],numeric,strict=True))
+    return f"<div class='native-chart-preview'><strong>{esc(series[0].get('name') or 'Source data')}</strong><div class='chart-bars'>{bars}</div></div>"
+
 def background_css(slide: SlideSpec, d) -> str:
     """Mirror the portable PowerPoint gradient with restrained CSS layers."""
     treatment=str(slide.visual_spec.get("background_treatment") or "clean").lower()
@@ -46,7 +61,10 @@ def background_css(slide: SlideSpec, d) -> str:
 def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
     slide=spec.slides[slide_number-1]; d=spec.design_system; image=image_data_url(slide.visual_spec.get("image_path"))
     background=background_css(slide,d)
-    card_columns=min(3,max(1,len(slide.elements[:4])))
+    # Keep grid geometry identical to the editable PPTX renderer: four
+    # capabilities are a balanced 2×2, not three cards plus an orphan row.
+    card_count=len(slide.elements[:4])
+    card_columns=2 if card_count in (2,4) else min(3,max(1,card_count))
     visual_width=IMAGE_CONTENT["image"][0]+IMAGE_CONTENT["image"][2]-IMAGE_CONTENT["lead"][0]
     visual_height=IMAGE_CONTENT["image"][3]
     visual_copy_width=IMAGE_CONTENT["lead"][2]/visual_width*100
@@ -58,6 +76,8 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
     if slide.layout_type.value=="title_slide":
         content=f'''<div class="title-copy"><span class="eyebrow">DECKFORGE / BRIEF</span><h1>{esc(slide.title)}</h1><p>{esc(slide.subtitle or slide.purpose)}</p></div>{f'<img class="hero" src="{image}" />' if image else '<div class="orb"></div>'}'''
         kind="title"
+    elif chart:=chart_markup(slide):
+        content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header>{chart}"; kind=""
     elif image:
         content=f'''<header><span class="eyebrow">{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class="visual-layout"><div class="visual-copy"><strong>{esc(slide.purpose)}</strong><div class="visual-cards">{cards(slide)}</div></div><img class="content-image" src="{image}" /></div>'''; kind=""
     elif slide.visual_spec.get("visual_variant")=="chevron_flow":
@@ -87,7 +107,7 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
     else:
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2>{f'<p class=subtitle>{esc(slide.subtitle)}</p>' if slide.subtitle else ''}</header><div class='cards'>{cards(slide)}</div>"; kind=""
     return textwrap.dedent(f'''<style>
-      .deckforge-preview {{ box-sizing:border-box; aspect-ratio:16/9; width:100%; overflow:hidden; position:relative; padding:5.6% 6%; color:{d.text_primary}; background:{background}; font-family:{d.font_body},Arial,sans-serif; border-radius:14px; }}
+      .deckforge-preview {{ box-sizing:border-box; aspect-ratio:16/9; width:100%; max-width:1120px; margin:0 auto; overflow:hidden; position:relative; padding:5.6% 6%; color:{d.text_primary}; background:{background}; font-family:{d.font_body},Arial,sans-serif; border-radius:14px; }}
       .deckforge-preview * {{ box-sizing:border-box; }} .deckforge-preview:before {{ content:''; position:absolute; inset:0 0 auto; height:7px; background:{d.primary_color}; }}
       header {{ position:relative; z-index:1; }} h1,h2,h3,p {{ margin:0; }} h1,h2,h3 {{ font-family:{d.font_heading},Arial,sans-serif; }} h2 {{ color:{d.header_color}; font-size:clamp(23px,3vw,42px); line-height:1.04; max-width:88%; }}
       .eyebrow,.index {{ color:{d.primary_color}; font-weight:800; font-size:11px; letter-spacing:.06em; }} .subtitle {{ color:{d.text_secondary}; margin-top:10px; }}
@@ -96,6 +116,7 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
       .columns {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:8%; }} .column p {{ margin:11px 0; }}
       .compare-rows {{ margin-top:5%; display:grid; gap:12px; }} .compare-row {{ display:grid; grid-template-columns:55px 30% 1fr; align-items:center; padding:16px 18px; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; box-shadow:8px 10px 22px rgba(0,0,0,.38); }} .compare-row h3 {{ color:{d.text_primary}; font-size:clamp(16px,1.65vw,23px); }} .compare-row p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); }}
       .metrics {{ display:grid; grid-template-columns:repeat(3,1fr); gap:26px; margin-top:9%; }} .metric {{ border-left:6px solid {d.primary_color}; padding:12px 20px; min-height:220px; }} .metric span {{ color:{d.primary_color}; font-weight:800; font-size:13px; }} .metric h3 {{ font-size:clamp(18px,1.9vw,28px); margin:24px 0 14px; }} .metric p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); line-height:1.4; }}
+      .native-chart-preview {{ margin:8% 3% 0; height:52%; border-bottom:1px solid {d.primary_color}; }} .native-chart-preview>strong {{ color:{d.text_secondary}; font-size:13px; }} .chart-bars {{ height:82%; display:flex; align-items:end; justify-content:space-around; gap:8%; padding-top:5%; }} .chart-bar {{ height:100%; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:end; gap:5px; }} .chart-bar span {{ display:block; width:54%; background:{d.primary_color}; border-radius:6px 6px 0 0; }} .chart-bar small {{ color:{d.text_secondary}; text-align:center; }} .chart-bar b {{ color:{d.text_primary}; font-size:12px; }}
       .asymmetric {{ display:grid; grid-template-columns:.88fr 1.12fr; gap:42px; margin-top:9%; align-items:center; }} .asymmetric>strong {{ font-family:{d.font_heading}; font-size:clamp(23px,2.7vw,39px); line-height:1.05; }} .support {{ padding:17px 20px; margin-bottom:15px; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; box-shadow:8px 10px 22px rgba(0,0,0,.38); }} .support h3 {{ color:{d.primary_color}; font-size:clamp(16px,1.5vw,21px); margin-bottom:7px; }} .support p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); }}
       .chevrons {{ display:grid; grid-template-columns:repeat({min(4,max(1,len(slide.elements[:4])))},1fr); gap:7px; margin-top:11%; }} .chevron {{ min-height:190px; padding:18px 17px; clip-path:polygon(0 0,88% 0,100% 50%,88% 100%,0 100%,12% 50%); background:{d.surface_color}; border:1px solid {d.primary_color}; }} .chevron:first-child {{ background:{d.primary_color}; color:{d.background_color}; }} .chevron span {{ font-weight:800; font-size:11px; }} .chevron h3 {{ margin:27px 5px 12px; font-size:clamp(14px,1.35vw,20px); }} .chevron p {{ margin:0 6px; color:{d.text_secondary}; font-size:clamp(11px,1vw,14px); line-height:1.3; }}
       .cycle {{ position:relative; width:58%; aspect-ratio:1.45; margin:5% auto 0; }} .cycle>strong,.cycle-node {{ position:absolute; display:grid; place-items:center; text-align:center; border:1px solid {d.primary_color}; border-radius:50%; }} .cycle>strong {{ inset:31% 32%; padding:10px; background:{d.surface_color}; font-size:clamp(12px,1.2vw,17px); }} .cycle-node {{ width:30%; aspect-ratio:1; padding:10px; background:{d.surface_color}; }} .cycle-node h3 {{ font-size:clamp(12px,1.2vw,17px); color:{d.text_primary}; }} .node-1 {{ left:35%; top:0; }} .node-2 {{ right:0; top:35%; }} .node-3 {{ left:0; top:35%; }} .node-4 {{ left:35%; bottom:0; }}

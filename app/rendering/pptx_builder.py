@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 import re
 from pptx import Presentation
+from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
+from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_AUTO_SHAPE_TYPE, MSO_CONNECTOR
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
 from pptx.oxml.xmlchemy import OxmlElement
@@ -396,6 +398,43 @@ def evidence_strip(slide, spec, d):
         add_text(slide,heading,x+.28,heading_y,width-.38,heading_height,text_size(heading,heading_size,width-.38),d.text_primary,True,font=d.font_heading)
         add_text(slide,element_text(item),x+.28,body_y,width-.38,body_height,16,d.text_secondary)
 
+def validated_chart_data(spec) -> tuple[list[str], list[tuple[str, list[float]]], str] | None:
+    """Accept only explicit, comparable user-supplied series for native charts."""
+    raw=spec.visual_spec.get("chart_data")
+    if not isinstance(raw, dict): return None
+    categories=raw.get("categories"); series=raw.get("series")
+    if not isinstance(categories, list) or len(categories)<2 or not isinstance(series, list) or not series:
+        return None
+    labels=[str(value).strip() for value in categories]
+    if not all(labels): return None
+    normalized=[]
+    for item in series[:3]:
+        if not isinstance(item, dict) or not isinstance(item.get("values"), list) or len(item["values"]) != len(labels): return None
+        try: values=[float(value) for value in item["values"]]
+        except (TypeError, ValueError): return None
+        if not all(value >= 0 for value in values): return None
+        normalized.append((str(item.get("name") or "Series").strip() or "Series", values))
+    return labels, normalized, str(raw.get("type") or "column").lower()
+
+def native_chart(slide, spec, d) -> bool:
+    """Add an editable PowerPoint chart only when factual chart data exists."""
+    payload=validated_chart_data(spec)
+    if not payload: return False
+    categories, series, kind=payload
+    chart_data=CategoryChartData(); chart_data.categories=categories
+    for name, values in series: chart_data.add_series(name, values)
+    chart_type=XL_CHART_TYPE.BAR_CLUSTERED if kind in {"bar", "bar_clustered"} else XL_CHART_TYPE.COLUMN_CLUSTERED
+    frame=slide.shapes.add_chart(chart_type, Inches(MARGIN+.25), Inches(2.03), Inches(11.55), Inches(4.25), chart_data)
+    chart=frame.chart; chart.has_legend=len(series)>1
+    if chart.has_legend: chart.legend.position=XL_LEGEND_POSITION.BOTTOM
+    chart.value_axis.has_major_gridlines=True
+    chart.value_axis.tick_labels.font.size=Pt(11); chart.category_axis.tick_labels.font.size=Pt(11)
+    plot=chart.plots[0]
+    for index, chart_series in enumerate(plot.series):
+        chart_series.format.fill.solid(); chart_series.format.fill.fore_color.rgb=rgb(d.primary_color if index == 0 else d.secondary_color)
+        chart_series.format.line.color.rgb=rgb(d.primary_color if index == 0 else d.secondary_color)
+    return True
+
 def asymmetric_insight(slide, spec, d):
     purpose=clean_copy(spec.purpose)
     purpose_size=26 if len(purpose)>70 else 30
@@ -446,7 +485,8 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
             header(slide,spec_slide,d)
             layout=spec_slide.layout_type.value
             variant=spec_slide.visual_spec.get("visual_variant")
-            if spec_slide.visual_spec.get("image_path"): content_with_visual(slide,spec_slide,d)
+            if native_chart(slide,spec_slide,d): pass
+            elif spec_slide.visual_spec.get("image_path"): content_with_visual(slide,spec_slide,d)
             elif variant=="cycle_loop": cycle_loop(slide,spec_slide,d)
             elif variant=="chevron_flow": chevron_flow(slide,spec_slide,d)
             elif variant=="isometric_stack": isometric_stack(slide,spec_slide,d)

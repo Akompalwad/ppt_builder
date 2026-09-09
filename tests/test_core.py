@@ -6,6 +6,7 @@ from app.agents.storyline_agent import StorylineAgent
 from app.agents.brief_agent import BriefInterpreterAgent
 from app.agents.slide_content_agent import SlideContentAgent
 from app.rendering.pptx_builder import build_presentation
+from app.rendering.web_renderer import render_slide_html
 from app.agents.qa_agent import PresentationQAAgent, summarize_point
 from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
 from app.agents.design_agent import DesignDirectorAgent
@@ -226,6 +227,25 @@ def test_slide_content_contract_restores_items_missing_from_model_response():
     restored=SlideContentAgent._preserve_contract_elements(directive, {"elements":[{"heading":"Context","body":"Model-expanded context."}]})
     assert [item["heading"] for item in restored] == ["Context", "Containment"]
     assert restored[0]["body"] == "Model-expanded context."
+
+def test_web_preview_matches_pptx_two_by_two_feature_grid():
+    spec=PresentationSpec(title="Capabilities", topic="SOC", slides=[SlideSpec(
+        slide_number=1, title="Core Capabilities", purpose="Show the platform pillars.", layout_type=LayoutType.feature_grid,
+        elements=[{"heading":f"Capability {index}", "body":"Technical detail."} for index in range(1, 5)],
+    )])
+    rendered=render_slide_html(spec, 1)
+    assert "grid-template-columns:repeat(2,1fr)" in rendered
+    assert "max-width:1120px" in rendered
+
+def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
+    spec=PresentationSpec(title="Response time", topic="SOC", slides=[SlideSpec(
+        slide_number=1, title="MTTR trend", purpose="Source-backed response time trend.", layout_type=LayoutType.key_metrics,
+        visual_spec={"chart_data":{"type":"column","categories":["Q1","Q2","Q3"],"series":[{"name":"MTTR minutes","values":[30,18,9]}]}},
+    )])
+    output=build_presentation(spec,tmp_path/"chart.pptx")
+    presentation=Presentation(output)
+    assert any(shape.has_chart for shape in presentation.slides[0].shapes)
+    assert "native-chart-preview" in render_slide_html(spec, 1)
 
 def test_request_accepts_a_detailed_structured_brief():
     request=CreatePresentationRequest(topic="{" + '"slides":[],' * 700 + "}")

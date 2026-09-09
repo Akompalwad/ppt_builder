@@ -61,6 +61,7 @@ Required title: {directive.title}
 Required subtitle: {directive.subtitle or "none"}
 Required layout: {directive.layout_type.value}
 Required items: {directive.requirements}
+Chart data supplied by the user: {directive.chart_data or "none"}
 ''' if directive else "")
             prompt=f'''Create exactly one PowerPoint slide as one JSON object.
 Topic: {request.topic}

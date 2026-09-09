@@ -35,6 +35,7 @@ class BriefSlide(BaseModel):
     layout_type: LayoutType
     requirements: list[str] = Field(default_factory=list)
     elements: list[SlideElement] = Field(default_factory=list)
+    chart_data: dict | None = None
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -48,7 +49,7 @@ class BriefSlide(BaseModel):
         return SlideSpec(
             slide_number=self.slide_number, title=self.title, subtitle=self.subtitle,
             purpose=purpose, layout_type=self.layout_type, elements=elements,
-            visual_spec={"brief_locked": True, "brief_requirements": self.requirements},
+            visual_spec={"brief_locked": True, "brief_requirements": self.requirements, **({"chart_data":self.chart_data} if self.chart_data else {})},
             metadata={"brief_layout_locked": True},
         )
 
@@ -170,6 +171,7 @@ class BriefInterpreterAgent:
                     slide_number=number, title=str(raw.get("title") or f"Slide {number}"),
                     subtitle=raw.get("subtitle"), layout_type=layout,
                     requirements=requirements, elements=raw_elements,
+                    chart_data=raw.get("chart_data") or (raw.get("visual_spec") or {}).get("chart_data"),
                 ))
             if slides:
                 return PresentationBrief(slides=slides, deck_title=payload.get("title"))

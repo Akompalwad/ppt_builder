@@ -58,5 +58,7 @@ class ImageService:
                 spec.slides[number-1].visual_spec["asset_metadata"]=provenance
                 results.append({"slide_number":number,"status":"generated","path":str(path),**provenance})
             except Exception as exc:
-                results.append({"slide_number":number,"status":"failed","reason":type(exc).__name__})
+                # Surface actionable diagnostics in the UI; a missing image
+                # should not silently collapse every cover to the same fallback.
+                results.append({"slide_number":number,"status":"failed","reason":f"{type(exc).__name__}: {str(exc)[:140]}"})
         return results
