@@ -32,6 +32,15 @@ Set `IMAGE_PROVIDER=unsplash` and `UNSPLASH_ACCESS_KEY` to the access key from y
 
 Streamlit calls FastAPI, which creates a persisted job and runs the orchestrator outside the UI request. The canonical Pydantic spec is versioned before the python-pptx renderer builds editable native shapes. Settings centralize configuration, leaving room for Oracle SQLAlchemy URLs and OCI storage adapters.
 
+### Structured presentation briefs
+
+DeckForge recognizes prompts that explicitly define slides using `Slide 1:`,
+`Title:`, `Subtitle:`, `Layout:`, and content lists such as `Topic Areas:`,
+`Steps to cover:`, `Tiers to cover:`, or `Key Outcomes:`. The Brief Interpreter
+turns these into protected slide contracts before the content, storyline, and
+design agents run. Explicit titles, layouts, and requested items are preserved
+even if a cloud provider is unavailable and deterministic generation is used.
+
 ## Deployment
 
 `docker compose up --build` starts API, Streamlit, and Redis. For OCI ARM64, use the same compose file on an Ampere VM, front it with Nginx, and use Autonomous Database and Object Storage credentials through environment variables. Never commit `.env`.

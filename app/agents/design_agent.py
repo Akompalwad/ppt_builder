@@ -131,7 +131,10 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
             if recipe.composition==previous_composition and recipe.name in {"grid", "insight"}:
                 recipe=RECIPES["insight"] if recipe.name=="grid" else RECIPES["grid"]
 
-            slide.layout_type=recipe.layout
+            # Explicit layout requests in a detailed user brief are a contract,
+            # not a suggestion for the visual agent to overwrite.
+            resolved_layout=slide.layout_type if slide.metadata.get("brief_layout_locked") else recipe.layout
+            slide.layout_type=resolved_layout
             slide.visual_spec.update({
                 "composition":recipe.composition,
                 "shape_language":recipe.shape_language,
@@ -143,7 +146,7 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
                 "background_treatment":choice.background_treatment if choice else self._default_background(recipe),
             })
             decisions.append(DesignDecision(
-                slide_number=slide.slide_number, layout=recipe.layout,
+                slide_number=slide.slide_number, layout=resolved_layout,
                 composition=recipe.composition, shape_language=recipe.shape_language,
                 visual_priority=recipe.visual_priority, native_transition=recipe.transition,
                 motion_sequence=list(recipe.motion_sequence),

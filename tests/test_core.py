@@ -3,6 +3,7 @@ import zipfile
 from app.schemas.presentation import CreatePresentationRequest
 from app.agents.orchestrator import PresentationOrchestrator, auto_theme_for_topic
 from app.agents.storyline_agent import StorylineAgent
+from app.agents.brief_agent import BriefInterpreterAgent
 from app.rendering.pptx_builder import build_presentation
 from app.agents.qa_agent import PresentationQAAgent, summarize_point
 from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
@@ -122,3 +123,31 @@ def test_storyline_uses_distinct_security_and_investor_arcs():
 def test_auto_theme_is_topic_aware():
     assert auto_theme_for_topic("SOC incident response automation").name == "Security Signal"
     assert auto_theme_for_topic("NSDL versus CDSL investor choice").name == "Investor Slate"
+
+def test_brief_interpreter_preserves_explicit_slide_contracts_in_fallback():
+    prompt='''Agentic AI Alert Response Platform
+Slide 1: Title Slide
+Title: Autonomous Alert Triage Platform
+Subtitle: Transforming SOC Operations with Agentic Incident Response
+Slide 2: Core Capabilities
+Layout: Feature Grid (4 items)
+Topic Areas:
+Autonomous Context Enrichment (correlating telemetry and indicators)
+Dynamic Investigation Plans (building hypothesis-driven triage paths)
+Human-in-the-Loop Safeguards (requiring analyst approval for high-risk actions)
+Self-Healing Playbooks (updating detections from retrospectives)
+Slide 3: Incident Response Pipeline
+Layout: Step Workflow (4 sequential steps)
+Steps to cover:
+Alert Ingestion (streaming SIEM and EDR data)
+Agent Triage (evaluating severity)
+Action Execution (isolating endpoints)
+Post-Mortem Audit (updating tickets)'''
+    brief=BriefInterpreterAgent().interpret(prompt, 3)
+    assert brief.is_structured and brief.by_number(2).layout_type == LayoutType.feature_grid
+    assert len(brief.by_number(2).requirements) == 4
+    spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic=prompt, slide_count=3))
+    assert spec.slides[0].title == "Autonomous Alert Triage Platform"
+    assert spec.slides[1].layout_type == LayoutType.feature_grid
+    assert len(spec.slides[1].elements) == 4
+    assert spec.slides[2].layout_type == LayoutType.step_workflow

@@ -109,10 +109,11 @@ class PresentationQAAgent:
                 if replacement:
                     slide.purpose=replacement
                     issues.append(f"Slide {slide.slide_number}: replaced internal planning copy with a slide fact")
-            if slide.layout_type in {LayoutType.step_workflow,LayoutType.process_flow,LayoutType.timeline} and len(slide.elements)>3:
+            locked=bool(slide.metadata.get("brief_layout_locked"))
+            if not locked and slide.layout_type in {LayoutType.step_workflow,LayoutType.process_flow,LayoutType.timeline} and len(slide.elements)>3:
                 slide.layout_type=LayoutType.feature_grid; issues.append(f"Slide {slide.slide_number}: converted dense flow to a readable grid")
             budget=16 if slide.layout_type in {LayoutType.feature_grid,LayoutType.comparison,LayoutType.two_column} else 13
-            max_elements=2 if slide.layout_type==LayoutType.two_column else 3
+            max_elements=2 if slide.layout_type==LayoutType.two_column else (4 if locked else 3)
             if len(slide.elements)>max_elements:
                 slide.elements=slide.elements[:max_elements]; issues.append(f"Slide {slide.slide_number}: reduced to {max_elements} decision points")
             for element in slide.elements:

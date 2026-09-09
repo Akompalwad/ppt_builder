@@ -5,6 +5,7 @@ from app.agents.qa_agent import PresentationQAAgent, summarize_point
 from app.agents.design_agent import DesignDirectorAgent
 from app.agents.storyline_agent import StorylineAgent
 from app.agents.slide_content_agent import SlideContentAgent
+from app.agents.brief_agent import BriefInterpreterAgent
 from app.config import get_settings
 from datetime import datetime, timezone
 import hashlib
@@ -62,6 +63,7 @@ class PresentationOrchestrator:
         def stage(name, value):
             if progress: progress(name, value)
         stage("RESEARCHING", 15); topic=request.topic.strip(); title=_clean_model_copy(topic,52).rstrip(".")
+        brief=BriefInterpreterAgent().interpret(topic, request.slide_count)
         selected_provider=(request.provider or "").lower()
         if selected_provider in {"nvidia", "gemini", "ollama"}:
             try:
@@ -77,7 +79,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 settings=get_settings()
                 slide_by_slide=selected_provider in {"gemini", "ollama"} or settings.nvidia_slide_by_slide_enabled
                 if slide_by_slide:
-                    spec=SlideContentAgent().generate(request, resolved_theme.name, StorylineAgent(), provider=selected_provider)
+                    spec=SlideContentAgent().generate(request, resolved_theme.name, StorylineAgent(), provider=selected_provider, brief=brief)
                     spec.design_system=resolved_theme
                 else:
                     generated=normalize_slide_copy(LLMGateway.from_settings(selected_provider,request.model).generate_json(prompt,max_tokens=token_budget))
@@ -123,6 +125,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             resolved_theme.name,
                             StorylineAgent(),
                             provider="ollama",
+                            brief=brief,
                         )
                         spec.design_system=resolved_theme
                         storyline_plan=StorylineAgent().apply(spec)
@@ -149,7 +152,16 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
         theme=resolve_theme(request.theme, topic)
         stage("DESIGNING", 55); stage("PLANNING_VISUALS", 66)
         slides=[]
-        if "kubernetes" in topic.lower() and "monolith" in topic.lower():
+        if brief.is_structured:
+            slides=[brief_slide.seed() for brief_slide in brief.slides]
+            # Preserve a complete requested deck even when a provider fails.
+            # Missing slide numbers receive the normal deterministic treatment.
+            existing={slide.slide_number for slide in slides}
+            for number in range(1, request.slide_count+1):
+                if number not in existing:
+                    slides.append(SlideSpec(slide_number=number,title=f"{title}: Key insight",purpose="Explain one decision-relevant idea.",layout_type=LayoutType.feature_grid))
+            slides.sort(key=lambda slide: slide.slide_number)
+        elif "kubernetes" in topic.lower() and "monolith" in topic.lower():
             slides=[
                 SlideSpec(slide_number=1,title="Kubernetes vs Monolithic Architecture",subtitle="Choose based on change rate, operating maturity, and scale.",layout_type=LayoutType.title_slide,purpose="Frame the enterprise architecture decision.",visual_spec={"icon_concept":"architecture"}),
                 SlideSpec(slide_number=2,title="Start with the operating model",layout_type=LayoutType.two_column,purpose="The right architecture reflects how the organization delivers software.",elements=[SlideElement(heading="Kubernetes fits",body="Independent services, frequent releases, and a platform team can justify the operating overhead."),SlideElement(heading="A monolith fits",body="A cohesive product, stable demand, and a small team benefit from a simpler operating model.")],visual_spec={"icon_concept":"team"}),
@@ -179,6 +191,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
             spec.metadata["provider_fallback_from"]=selected_provider
         spec.metadata["agent_trace"]=[
             trace("Content Research Agent","completed","Extracted the topic, audience, and requested tone.",{"topic":topic,"audience":request.audience,"tone":request.tone}),
+            trace("Brief Interpreter Agent", "completed", "Converted explicit slide instructions into protected content and layout contracts.", {"structured":brief.is_structured, "locked_slides":[slide.slide_number for slide in brief.slides]}),
             trace("Content Validation Agent","completed","Applied concise, presentation-safe deterministic copy.",{"content_policy":"three concise decision-oriented points per content slide"}),
             trace("Storyline Agent","completed","Assigned a varied narrative arc before slide layouts were selected.",storyline_plan.model_dump()),
             trace("Theme Agent","completed","Resolved the selected theme into deterministic design tokens.",{"theme":theme.name,"primary_color":theme.primary_color}),
