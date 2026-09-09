@@ -2,13 +2,13 @@ import os, time, uuid, httpx, streamlit as st
 import streamlit.components.v1 as components
 from app.schemas.presentation import PresentationSpec
 from app.rendering.web_renderer import render_slide_html
-st.set_page_config(page_title="DeckForge",page_icon="▣",layout="wide")
+st.set_page_config(page_title="SlideWeaver",page_icon="▣",layout="wide")
 API=os.getenv("API_URL","http://localhost:8000")
-st.title("DeckForge"); st.caption("Professional, editable presentations — generated asynchronously.")
+st.title("SlideWeaver"); st.caption("Professional, editable presentations — generated asynchronously.")
 st.caption("Testing mode: presentation history is tied to this browser session until Google sign-in is enabled.")
 if "access_session_id" not in st.session_state:
     st.session_state.access_session_id=uuid.uuid4().hex
-ACCESS_HEADERS={"X-DeckForge-Session":st.session_state.access_session_id}
+ACCESS_HEADERS={"X-SlideWeaver-Session":st.session_state.access_session_id}
 try:
     access=httpx.post(f"{API}/api/access/claim",headers=ACCESS_HEADERS,timeout=5)
     if access.status_code == 429:
@@ -21,7 +21,7 @@ except httpx.HTTPError:
 with st.sidebar:
     # Local Ollama remains an opt-in server-side contingency only. Users choose
     # between the two supported cloud agent sources.
-    provider=st.selectbox("Provider",["Gemini","NVIDIA"]); model=st.text_input("Model (optional)")
+    provider=st.selectbox("Provider",["Gemini","NVIDIA"])
     theme=st.selectbox("Theme",["Auto","Cyber Dark","Minimalist White","Corporate Blue"]); count=st.slider("Slides",3,10,6)
     audience=st.text_input("Audience","General audience"); tone=st.selectbox("Tone",["Professional","Executive","Educational","Persuasive"])
     include_images=st.checkbox("Use topic-specific Unsplash visuals",value=True,help="Uses Unsplash when configured; at most three visuals per deck. Native editable visuals remain the fallback.")
@@ -49,11 +49,11 @@ if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
     try:
         if provider in {"NVIDIA", "Gemini"}:
             provider_id=provider.lower()
-            check=httpx.get(f"{API}/api/llm/status",params={"provider":provider_id,"model":model or None},headers=ACCESS_HEADERS,timeout=45)
+            check=httpx.get(f"{API}/api/llm/status",params={"provider":provider_id},headers=ACCESS_HEADERS,timeout=45)
             if check.status_code != 200:
                 st.error(f"{provider} is unavailable or the selected model is not enabled. No job was started.")
                 st.stop()
-        r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":count,"theme":theme,"provider":provider.lower(),"model":model or None,"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job=r.json()
+        r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":count,"theme":theme,"provider":provider.lower(),"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job=r.json()
     except httpx.HTTPStatusError as exc:
         # A validation error (for example a malformed structured brief) is a
         # reachable API returning useful feedback, not a connectivity failure.
@@ -75,6 +75,8 @@ if job:=st.session_state.get("job"):
             opened=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS,timeout=5).json()
             status={"status":opened["status"],"progress":100 if opened["status"]=="COMPLETED" else 0,"current_stage":opened["status"]}
         st.progress(status["progress"],text=status["current_stage"])
+        if status["status"] in {"QUEUED", "RUNNING"}:
+            st.caption(f"Active work: {status['current_stage']}")
         if status["status"]=="COMPLETED":
             deck=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS).json(); st.success("Presentation ready")
             generation_metadata=deck["spec"].get("metadata",{})
@@ -148,7 +150,7 @@ if job:=st.session_state.get("job"):
                 with st.expander(f"{slide['slide_number']}. {slide['title']}"):
                     st.write(slide["purpose"])
                     for item in slide["elements"]: st.markdown(f"- **{item.get('heading') or 'Insight'}** — {item.get('body') or ''}")
-            st.link_button("Download editable PPTX",f"{API}/api/presentations/{job['presentation_id']}/download?deckforge_session={st.session_state.access_session_id}")
+            st.link_button("Download editable PPTX",f"{API}/api/presentations/{job['presentation_id']}/download?slideweaver_session={st.session_state.access_session_id}")
         elif status["status"] in {"QUEUED", "RUNNING"}:
             st.caption("Generation is running. This page refreshes automatically every two seconds; you may also leave and return later.")
             time.sleep(2)

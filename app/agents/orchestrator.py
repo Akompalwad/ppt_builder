@@ -13,8 +13,8 @@ import re
 
 THEMES={
  "Cyber Dark": DesignSystem(),
- "Minimalist White": DesignSystem(name="Minimalist White",background_color="#FFFFFF",surface_color="#F5F7FA",primary_color="#1565C0",accent_color="#F57C00",header_color="#1A2B3C",text_primary="#17212B",text_secondary="#52606D"),
- "Corporate Blue": DesignSystem(name="Corporate Blue",background_color="#F4F8FC",surface_color="#FFFFFF",primary_color="#0057B8",secondary_color="#0B7FAB",accent_color="#FF9F1C",header_color="#003A70",text_primary="#102A43",text_secondary="#486581"),
+ "Minimalist White": DesignSystem(name="Minimalist White",background_color="#FCFBF8",surface_color="#FFFFFF",primary_color="#8070A5",secondary_color="#B8ADC9",accent_color="#C77B45",header_color="#25242B",text_primary="#29272F",text_secondary="#67636F",muted_text="#918B99",card_style="flat",shadow_style="none"),
+ "Corporate Blue": DesignSystem(name="Corporate Blue",background_color="#EAF2FB",surface_color="#FFFFFF",primary_color="#075FC4",secondary_color="#338CCB",accent_color="#F2A51A",header_color="#0B315B",text_primary="#102B4A",text_secondary="#466786",muted_text="#7390AA",card_style="elevated",shadow_style="soft"),
  "Security Signal": DesignSystem(name="Security Signal",background_color="#081117",surface_color="#10272C",primary_color="#20D3A2",secondary_color="#197C78",accent_color="#FFB703",header_color="#D9FFF1",text_primary="#F2FFFB",text_secondary="#B6D4CC",muted_text="#7CA69A"),
  "Investor Slate": DesignSystem(name="Investor Slate",background_color="#F4F7FB",surface_color="#FFFFFF",primary_color="#1B5FBF",secondary_color="#6B8FBE",accent_color="#E89B1F",header_color="#123257",text_primary="#172D46",text_secondary="#536A82",muted_text="#71869B"),
  "Aurora Tech": DesignSystem(name="Aurora Tech",background_color="#101024",surface_color="#20213C",primary_color="#A78BFA",secondary_color="#3B82F6",accent_color="#F6C945",header_color="#F4F0FF",text_primary="#FAF9FF",text_secondary="#C7C5E1",muted_text="#9390B5"),
@@ -62,7 +62,7 @@ class PresentationOrchestrator:
     def generate(self, request: CreatePresentationRequest, progress=None) -> PresentationSpec:
         def stage(name, value):
             if progress: progress(name, value)
-        stage("RESEARCHING", 15); topic=request.topic.strip(); title=_clean_model_copy(topic,52).rstrip(".")
+        stage("Brief Classification Agent — analyzing prompt structure", 8); topic=request.topic.strip(); title=_clean_model_copy(topic,52).rstrip(".")
         brief_agent=BriefInterpreterAgent()
         prompt_classification=brief_agent.classify(topic)
         brief=brief_agent.interpret(topic, request.slide_count)
@@ -77,7 +77,7 @@ class PresentationOrchestrator:
         selected_provider=(request.provider or "").lower()
         if selected_provider in {"nvidia", "gemini", "ollama"}:
             try:
-                stage("RESEARCHING", 22)
+                stage("Theme Agent — selecting a visual system", 18)
                 resolved_theme=resolve_theme(request.theme, topic)
                 prompt=f'''Create a professional {request.slide_count}-slide PowerPoint deck specification.
 Topic: {topic}\nAudience: {request.audience}\nTone: {request.tone}\nLanguage: {request.language}\nTheme: {resolved_theme.name}
@@ -91,17 +91,21 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 # slide: a full-deck call could silently omit its contracts.
                 slide_by_slide=brief.is_structured or selected_provider in {"gemini", "ollama"} or settings.nvidia_slide_by_slide_enabled
                 if slide_by_slide:
-                    spec=SlideContentAgent().generate(request, resolved_theme.name, StorylineAgent(), provider=selected_provider, brief=brief)
+                    spec=SlideContentAgent().generate(request, resolved_theme.name, StorylineAgent(), provider=selected_provider, brief=brief, progress=stage)
                     spec.design_system=resolved_theme
                 else:
+                    stage("Content Agent — drafting presentation specification", 28)
                     generated=normalize_slide_copy(LLMGateway.from_settings(selected_provider,request.model).generate_json(prompt,max_tokens=token_budget))
                     generated["design_system"]=resolved_theme.model_dump()
                     spec=PresentationSpec.model_validate(generated)
+                stage("Storyline Agent — assigning narrative roles", 70)
                 storyline_plan=StorylineAgent().apply(spec)
                 # The design pass owns only composition and visual direction;
                 # slide wording remains the responsibility of the content and
                 # QA stages.
+                stage("Design Director Agent — selecting layouts and visuals", 78)
                 design_plan=DesignDirectorAgent().apply(spec, provider=selected_provider, model=request.model)
+                stage("Presentation QA Agent — checking copy and layout budgets", 87)
                 qa_report=PresentationQAAgent().validate_and_recompose(spec)
                 provider_label={"gemini":"Gemini", "nvidia":"NVIDIA", "ollama":"Ollama"}[selected_provider]
                 spec.metadata["generation_provider"]=selected_provider
@@ -120,7 +124,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                     trace("Visual Director","completed","Assigned native-shape visual treatments from each slide specification.",{"treatments":[s.visual_spec.get("treatment","native_shapes") for s in spec.slides]}),
                     trace("Presentation QA Agent","completed","Recomposed overlong copy into complete slide-sized points.",qa_report),
                 ]
-                stage("QA",92); stage("RENDERING",97); return spec
+                stage("Slide Composer Agent — preparing editable slide specification",92); return spec
             except Exception as exc:
                 # A provider outage must never prevent usable deck generation.
                 # Store a bounded, credential-free diagnosis so the UI tells the
@@ -139,10 +143,14 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             StorylineAgent(),
                             provider="ollama",
                             brief=brief,
+                            progress=stage,
                         )
                         spec.design_system=resolved_theme
+                        stage("Storyline Agent — assigning narrative roles",70)
                         storyline_plan=StorylineAgent().apply(spec)
+                        stage("Design Director Agent — selecting layouts and visuals",78)
                         design_plan=DesignDirectorAgent().apply(spec)
+                        stage("Presentation QA Agent — checking copy and layout budgets",87)
                         qa_report=PresentationQAAgent().validate_and_recompose(spec)
                         spec.metadata["generation_provider"]="ollama_fallback"
                         spec.metadata["generation_model"]=settings.ollama_model
@@ -155,16 +163,16 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             trace("Design Director Agent", "completed", "Selected slide silhouettes and visual priorities.", design_plan.model_dump()),
                             trace("Presentation QA Agent", "completed", "Recomposed overlong copy into complete slide-sized points.", qa_report),
                         ]
-                        stage("QA",92); stage("RENDERING",97); return spec
+                        stage("Slide Composer Agent — preparing editable slide specification",92); return spec
                     except Exception as ollama_exc:
                         fallback_reason=f"{selected_provider.title()}: {fallback_reason}; Ollama: {str(ollama_exc)[:180]}"
             else:
                 fallback_reason=""
         else:
             fallback_reason=""
-        stage("VALIDATING", 28); stage("PLANNING", 42)
+        stage("Content Validation Agent — preparing safe deterministic content", 28); stage("Storyline Agent — planning the narrative", 42)
         theme=resolve_theme(request.theme, topic)
-        stage("DESIGNING", 55); stage("PLANNING_VISUALS", 66)
+        stage("Theme Agent — selecting a visual system", 55); stage("Design Director Agent — selecting layouts and visuals", 66)
         slides=[]
         if brief.is_structured:
             slides=[brief_slide.seed() for brief_slide in brief.slides]
@@ -198,6 +206,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
         stage("COMPOSING",82); spec=PresentationSpec(title=title,subtitle=f"{request.tone} presentation",topic=topic,target_audience=request.audience,language=request.language,theme=theme.name,slides=slides,design_system=theme)
         storyline_plan=StorylineAgent().apply(spec)
         design_plan=DesignDirectorAgent().apply(spec)
+        stage("Presentation QA Agent — checking copy and layout budgets", 82)
         qa_report=PresentationQAAgent().validate_and_recompose(spec)
         spec.metadata["generation_provider"]="fallback" if fallback_reason else "deterministic"
         if fallback_reason:
@@ -215,7 +224,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
             trace("Slide Composer Agent","completed","Composed canonical SlideSpec objects for PPTX and web preview.",{"titles":[s.title for s in slides]}),
             trace("Presentation QA Agent","completed","Recomposed copy and checked each layout against its readable-content budget.",qa_report),
         ]
-        stage("QA",92); stage("RENDERING",97); return spec
+        stage("Slide Composer Agent — preparing editable slide specification",92); return spec
     def edit_slide(self, spec: PresentationSpec, slide_number: int, instruction: str) -> PresentationSpec:
         copy=spec.model_copy(deep=True); slide=copy.slides[slide_number-1]; slide.metadata["last_edit_instruction"]=instruction
         provider=copy.metadata.get("generation_provider")

@@ -74,7 +74,7 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
     visual_card_height=IMAGE_CONTENT["card_height"]/visual_height*100
     visual_card_gap=IMAGE_CONTENT["card_gap"]/visual_height*100
     if slide.layout_type.value=="title_slide":
-        content=f'''<div class="title-copy"><span class="eyebrow">DECKFORGE / BRIEF</span><h1>{esc(slide.title)}</h1><p>{esc(slide.subtitle or slide.purpose)}</p></div>{f'<img class="hero" src="{image}" />' if image else '<div class="orb"></div>'}'''
+        content=f'''<div class="title-copy"><span class="eyebrow">SLIDEWEAVER / BRIEF</span><h1>{esc(slide.title)}</h1><p>{esc(slide.subtitle or slide.purpose)}</p></div>{f'<img class="hero" src="{image}" />' if image else '<div class="orb"></div>'}'''
         kind="title"
     elif chart:=chart_markup(slide):
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header>{chart}"; kind=""
@@ -107,8 +107,8 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
     else:
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2>{f'<p class=subtitle>{esc(slide.subtitle)}</p>' if slide.subtitle else ''}</header><div class='cards'>{cards(slide)}</div>"; kind=""
     return textwrap.dedent(f'''<style>
-      .deckforge-preview {{ box-sizing:border-box; aspect-ratio:16/9; width:100%; max-width:1120px; margin:0 auto; overflow:hidden; position:relative; padding:5.6% 6%; color:{d.text_primary}; background:{background}; font-family:{d.font_body},Arial,sans-serif; border-radius:14px; }}
-      .deckforge-preview * {{ box-sizing:border-box; }} .deckforge-preview:before {{ content:''; position:absolute; inset:0 0 auto; height:7px; background:{d.primary_color}; }}
+      .slideweaver-preview {{ box-sizing:border-box; aspect-ratio:16/9; width:100%; max-width:1120px; margin:0 auto; overflow:hidden; position:relative; padding:5.6% 6%; color:{d.text_primary}; background:{background}; font-family:{d.font_body},Arial,sans-serif; border-radius:14px; }}
+      .slideweaver-preview * {{ box-sizing:border-box; }} .slideweaver-preview:before {{ content:''; position:absolute; inset:0 0 auto; height:7px; background:{d.primary_color}; }}
       header {{ position:relative; z-index:1; }} h1,h2,h3,p {{ margin:0; }} h1,h2,h3 {{ font-family:{d.font_heading},Arial,sans-serif; }} h2 {{ color:{d.header_color}; font-size:clamp(23px,3vw,42px); line-height:1.04; max-width:88%; }}
       .eyebrow,.index {{ color:{d.primary_color}; font-weight:800; font-size:11px; letter-spacing:.06em; }} .subtitle {{ color:{d.text_secondary}; margin-top:10px; }}
       .cards {{ display:grid; grid-template-columns:repeat({card_columns},1fr); gap:14px; margin-top:8%; }} .card,.column {{ background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; border-radius:12px; padding:18px; min-height:205px; box-shadow:8px 10px 22px rgba(0,0,0,.38); }}
@@ -124,4 +124,4 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
       .title {{ padding:9% 6%; }} .title:before {{ display:none; }} .title-copy {{ position:relative; z-index:2; width:61%; }} .title h1 {{ color:{d.header_color}; font-size:clamp(30px,5vw,66px); line-height:.98; margin:22px 0; }} .title p {{ color:{d.text_secondary}; font-size:clamp(15px,1.65vw,23px); line-height:1.35; }}
       .hero {{ position:absolute; right:5%; top:8%; height:84%; max-width:31%; object-fit:cover; border-left:7px solid {d.primary_color}; }} .orb {{ position:absolute; right:9%; top:16%; width:25%; aspect-ratio:1; border-radius:50%; background:linear-gradient(315deg,{mix(d.background_color,d.primary_color,.28)},{mix(d.background_color,d.primary_color,.025)}); }}
       .visual-layout {{ position:absolute; left:{x_percent(IMAGE_CONTENT['lead'][0])}; top:{y_percent(IMAGE_CONTENT['lead'][1])}; width:{x_percent(visual_width)}; height:{y_percent(visual_height)}; }} .visual-copy {{ position:absolute; left:0; top:0; width:{visual_copy_width:.3f}%; height:100%; }} .visual-layout strong {{ display:block; width:100%; height:{IMAGE_CONTENT['lead'][3]/visual_height*100:.3f}%; font-size:clamp(17px,1.8vw,25px); line-height:1.08; }} .visual-cards {{ position:absolute; left:0; top:{visual_cards_top:.3f}%; width:100%; display:grid; gap:{visual_card_gap:.3f}%; }} .visual-cards .card {{ min-height:{visual_card_height:.3f}%; height:{visual_card_height:.3f}%; padding:11px 15px; }} .visual-cards .card h3 {{ margin:0 0 5px; }} .content-image {{ position:absolute; left:{visual_image_left:.3f}%; top:0; width:{visual_image_width:.3f}%; height:100%; object-fit:cover; border-radius:12px; border:1px solid {d.primary_color}; }}
-    </style><article class="deckforge-preview {kind}">{content}</article>''').strip()
+    </style><article class="slideweaver-preview {kind}">{content}</article>''').strip()

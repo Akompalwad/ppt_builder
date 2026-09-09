@@ -38,6 +38,7 @@ class SlideContentAgent:
         *,
         provider: str = "nvidia",
         brief=None,
+        progress=None,
     ) -> PresentationSpec:
         placeholders=[]
         for number in range(1, request.slide_count + 1):
@@ -55,6 +56,11 @@ class SlideContentAgent:
             provider, request.model if provider in {"nvidia", "gemini"} else None
         )
         for slide, beat in zip(spec.slides, plan.beats, strict=True):
+            if progress:
+                progress(
+                    f"Slide Content Agent — drafting slide {slide.slide_number}/{request.slide_count}: {beat.stage}",
+                    25 + int((slide.slide_number - 1) / max(1, request.slide_count) * 42),
+                )
             directive=brief.by_number(slide.slide_number) if brief else None
             locked_contract=(f'''This is an explicit user-authored contract. Preserve its exact title, subtitle, layout, and every required item. Expand each item with accurate, concise technical explanation; do not omit, rename, or replace it.
 Required title: {directive.title}

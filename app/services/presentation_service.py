@@ -16,7 +16,7 @@ class PresentationService:
     def _user(self, db, session_id: str):
         # Google OAuth is intentionally disabled during testing. Isolate data
         # by the claimed browser session until a real identity provider is on.
-        email=f"session-{session_id}@local.deckforge" if session_id != "development" else DEV_EMAIL
+        email=f"session-{session_id}@local.slideweaver" if session_id != "development" else DEV_EMAIL
         user=db.scalar(select(User).where(User.email==email))
         if not user: user=User(email=email,display_name="Testing User",provider="session"); db.add(user); db.flush()
         return user
@@ -45,14 +45,17 @@ class PresentationService:
                 def progress(stage,value): job.current_stage=stage; job.progress=value; job.status="RUNNING"; db.commit()
                 try:
                     spec=PresentationOrchestrator().generate(request,progress)
+                    progress("Visual Asset Service — retrieving topic-specific imagery", 94)
                     asset_results=ImageService().attach_assets(spec,get_settings().local_storage_path / presentation_id / "assets",request.include_external_images)
                     # Image attachment changes the selected PPTX composition.
                     # Re-run layout QA now that image-backed slides have their
                     # final, narrower text area.
+                    progress("Presentation QA Agent — rechecking image-aware layouts", 96)
                     PresentationQAAgent().validate_and_recompose(spec)
                     spec.metadata["asset_generation"]=asset_results
                     spec.metadata["file_expires_at"]=schedule_expiry(presentation_id)
                     version=PresentationVersion(presentation_id=presentation_id,version_number=1,spec_json=spec.model_dump(mode="json"),generated_by="pipeline"); db.add(version); db.flush()
+                    progress("PPTX Renderer — building the editable presentation", 98)
                     file=get_settings().local_storage_path / presentation_id / "versions" / "1" / "presentation.pptx"; build_presentation(spec,file)
                     presentation.title=spec.title; presentation.status="COMPLETED"; presentation.current_version_id=version.id; job.status="COMPLETED"; job.progress=100; job.current_stage="COMPLETED"; db.commit()
                 except Exception as exc:

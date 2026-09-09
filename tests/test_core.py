@@ -53,11 +53,11 @@ def test_qa_removes_unpunctuated_comparison_question_from_cover_title():
 
 def test_qa_does_not_turn_an_overview_request_into_a_fake_comparison():
     spec=PresentationSpec(
-        title="DeckForge", topic="Create a 7-slide product and technical overview of DeckForge, an AI-powered PowerPoint generator.",
-        slides=[SlideSpec(slide_number=1, title="DeckForge", purpose="Overview", layout_type=LayoutType.title_slide)],
+        title="SlideWeaver", topic="Create a 7-slide product and technical overview of SlideWeaver, an AI-powered PowerPoint generator.",
+        slides=[SlideSpec(slide_number=1, title="SlideWeaver", purpose="Overview", layout_type=LayoutType.title_slide)],
     )
     PresentationQAAgent().validate_and_recompose(spec)
-    assert spec.slides[0].title == "DeckForge"
+    assert spec.slides[0].title == "SlideWeaver"
 
 def test_qa_replaces_private_story_instruction_with_slide_fact():
     spec=PresentationSpec(
@@ -125,6 +125,25 @@ def test_storyline_uses_distinct_security_and_investor_arcs():
 def test_auto_theme_is_topic_aware():
     assert auto_theme_for_topic("SOC incident response automation").name == "Security Signal"
     assert auto_theme_for_topic("NSDL versus CDSL investor choice").name == "Investor Slate"
+
+def test_minimalist_and_corporate_themes_are_visually_distinct():
+    from app.agents.orchestrator import THEMES
+    minimalist=THEMES["Minimalist White"]
+    corporate=THEMES["Corporate Blue"]
+    assert minimalist.background_color != corporate.background_color
+    assert minimalist.primary_color != corporate.primary_color
+    assert minimalist.header_color != corporate.header_color
+
+def test_generation_progress_names_active_agents():
+    events=[]
+    PresentationOrchestrator().generate(
+        CreatePresentationRequest(topic="A platform strategy", slide_count=3),
+        progress=lambda stage, percent: events.append((stage, percent)),
+    )
+    labels=[stage for stage, _ in events]
+    assert any("Brief Classification Agent" in label for label in labels)
+    assert any("Design Director Agent" in label for label in labels)
+    assert any("Presentation QA Agent" in label for label in labels)
 
 def test_brief_interpreter_preserves_explicit_slide_contracts_in_fallback():
     prompt='''Agentic AI Alert Response Platform

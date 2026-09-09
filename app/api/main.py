@@ -6,7 +6,7 @@ from app.models.database import init_db
 from app.api.routes import access,health,presentations,jobs,llm
 from app.config import get_settings
 from app.services.lifecycle_service import cleanup_expired_files
-app=FastAPI(title="DeckForge API",version="0.1.0")
+app=FastAPI(title="SlideWeaver API",version="0.1.0")
 cleanup_task: asyncio.Task | None = None
 logger=logging.getLogger(__name__)
 

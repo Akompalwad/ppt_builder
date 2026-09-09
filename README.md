@@ -16,7 +16,7 @@ The default mock provider needs no API key and produces a deterministic deck. Th
 
 ## NVIDIA NIM
 
-Create an NVIDIA developer API key at [build.nvidia.com](https://build.nvidia.com), copy `.env.example` to `.env`, then set `NVIDIA_API_KEY`. Choose **NVIDIA** in the UI. The default `nvidia/nemotron-3-super-120b-a12b` has been verified callable for this account and returns clean instruction output. If NVIDIA is unavailable or returns invalid output, DeckForge safely uses its local fallback generator.
+Create an NVIDIA developer API key at [build.nvidia.com](https://build.nvidia.com), copy `.env.example` to `.env`, then set `NVIDIA_API_KEY`. Choose **NVIDIA** in the UI. The default `nvidia/nemotron-3-super-120b-a12b` has been verified callable for this account and returns clean instruction output. If NVIDIA is unavailable or returns invalid output, SlideWeaver safely uses its local fallback generator.
 
 To test which curated, presentation-relevant NVIDIA catalog models are callable for your account, run `set -a; source .env; set +a; python scripts/check_nvidia_models.py`. Each probe is limited to 32 completion tokens.
 
@@ -26,7 +26,7 @@ NVIDIA generates the slide-specific visual briefs and icon concepts. To generate
 
 ### Unsplash
 
-Set `IMAGE_PROVIDER=unsplash` and `UNSPLASH_ACCESS_KEY` to the access key from your Unsplash developer application. NVIDIA turns each slide's intent into a concise Unsplash search query. DeckForge downloads the selected image, records its source URL, photographer, and Unsplash License in the versioned spec, and registers the download with Unsplash. Enable **Generate topic-specific visuals** when creating the deck.
+Set `IMAGE_PROVIDER=unsplash` and `UNSPLASH_ACCESS_KEY` to the access key from your Unsplash developer application. NVIDIA turns each slide's intent into a concise Unsplash search query. SlideWeaver downloads the selected image, records its source URL, photographer, and Unsplash License in the versioned spec, and registers the download with Unsplash. Enable **Generate topic-specific visuals** when creating the deck.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ Streamlit calls FastAPI, which creates a persisted job and runs the orchestrator
 
 ### Structured presentation briefs
 
-DeckForge recognizes prompts that explicitly define slides using `Slide 1:`,
+SlideWeaver recognizes prompts that explicitly define slides using `Slide 1:`,
 `Title:`, `Subtitle:`, `Layout:`, and content lists such as `Topic Areas:`,
 `Steps to cover:`, `Tiers to cover:`, or `Key Outcomes:`. The Brief Interpreter
 turns these into protected slide contracts before the content, storyline, and
@@ -42,7 +42,7 @@ design agents run. Explicit titles, layouts, and requested items are preserved
 even if a cloud provider is unavailable and deterministic generation is used.
 
 For an editable native chart, include explicit comparable source data in the
-slide's JSON contract. DeckForge will not invent chart values from a single
+slide's JSON contract. SlideWeaver will not invent chart values from a single
 claim or target metric:
 
 ```json
@@ -91,7 +91,7 @@ changes only Python source files, the dependency-install command is harmless;
 it is included so the same release procedure also handles future dependency
 changes.
 
-With the **Auto** theme, DeckForge selects a topic-appropriate design system:
+With the **Auto** theme, SlideWeaver selects a topic-appropriate design system:
 security and SOC decks use *Security Signal*, investment/depository decks use
 *Investor Slate*, and AI/platform decks use *Aurora Tech*. The Storyline Agent
 also uses topic-specific story arcs, so decks on unrelated subjects do not

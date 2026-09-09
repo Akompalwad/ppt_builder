@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe NVIDIA models that are relevant to DeckForge with minimal token use.
+"""Probe NVIDIA models that are relevant to SlideWeaver with minimal token use.
 
 Requires NVIDIA_API_KEY in the environment. This tests account routing/access,
 not qualitative model performance. Each probe asks for at most 32 tokens.

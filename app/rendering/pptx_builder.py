@@ -330,7 +330,7 @@ def title_slide(slide, spec, d):
         add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,8.62,1.02,.10,5.78,d.primary_color,d.primary_color)
     else:
         comparison_cover_visual(slide,spec.title,d)
-    add_text(slide,"DECKFORGE / BRIEF",MARGIN,1.12,3.0,.24,10,d.primary_color,True)
+    add_text(slide,"SLIDEWEAVER / BRIEF",MARGIN,1.12,3.0,.24,10,d.primary_color,True)
     add_text(slide,spec.title,MARGIN,1.62,text_width,2.60,cover_title_size(spec.title),d.header_color,True,font=d.font_heading)
     subtitle=spec.subtitle or spec.purpose
     add_text(slide,subtitle,MARGIN,4.58,7.2,.66,20,d.text_secondary)

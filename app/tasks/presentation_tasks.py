@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.schemas.presentation import CreatePresentationRequest
 from app.services.presentation_service import PresentationService
 
-celery_app = Celery("deckforge", broker=get_settings().redis_url, backend=get_settings().redis_url)
+celery_app = Celery("slideweaver", broker=get_settings().redis_url, backend=get_settings().redis_url)
 celery_app.conf.beat_schedule = {"cleanup-expired-files": {"task":"app.tasks.cleanup_tasks.cleanup_generated_files", "schedule":600}}
 
 @celery_app.task(bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=2)
