@@ -245,32 +245,36 @@ def grid_cards(slide, spec, d):
         card(slide,item,MARGIN+col*(card_w+gap),CONTENT_Y+row*(card_h+gap),card_w,card_h,d,i,emphasis=i==0)
 
 def workflow(slide, spec, d):
-    items=spec.elements[:4]; n=max(1,len(items)); gap=.36; width=(W-2*MARGIN-gap*(n-1))/n
+    """Connected flow stages with all copy contained in each stage surface."""
+    items=spec.elements[:4]; n=max(1,len(items)); gap=.28; width=(W-2*MARGIN-gap*(n-1))/n
+    stage_y,stage_h=2.18,3.52
     for i, item in enumerate(items):
-        x=MARGIN+i*(width+gap); accent_orb(slide,x+width/2-.28,2.28,.56,d)
-        add_text(slide,str(i+1),x+width/2-.28,2.46,.56,.14,9,d.background_color,True,align=PP_ALIGN.CENTER)
+        x=MARGIN+i*(width+gap)
+        add_surface(slide,x,stage_y,width,stage_h,d,emphasis=i==0)
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+.24,stage_y+.25,.46,.46,d.primary_color,d.primary_color)
+        add_text(slide,f"{i+1:02d}",x+.24,stage_y+.39,.46,.14,9,d.background_color,True,align=PP_ALIGN.CENTER)
         if i<n-1:
-            connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+width+.06), Inches(2.56), Inches(x+width+gap-.06), Inches(2.56)); connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.5)
-        add_text(slide,item.heading or f"Step {i+1}",x,3.05,width,.48,text_size(item.heading or "",16,width),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        add_text(slide,element_text(item),x+.08,3.72,width-.16,1.1,text_size(element_text(item),12,width-.16),d.text_secondary,align=PP_ALIGN.CENTER)
+            connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+width+.03), Inches(stage_y+stage_h/2), Inches(x+width+gap-.03), Inches(stage_y+stage_h/2)); connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.5)
+        add_text(slide,item.heading or f"Step {i+1}",x+.24,stage_y+.95,width-.48,.72,text_size(item.heading or "",20,width-.48),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.26,stage_y+1.94,width-.52,1.10,text_size(element_text(item),15,width-.52),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
-    """A native process diagram with every step's copy in a clear boundary."""
+    """A native process diagram whose enlarged chevrons contain the full step.
+
+    Keeping the explanation inside each stage makes the sequence easier to
+    scan and avoids a second, detached row of generic context cards.
+    """
     items=spec.elements[:4]; count=max(1,len(items)); gap=.10; width=(W-2*MARGIN-gap*(count-1))/count
-    arrow_y,arrow_h=2.22,1.22
-    detail_y,detail_h=3.70,2.06
+    arrow_y,arrow_h=2.16,3.78
     for index,item in enumerate(items):
         x=MARGIN+index*(width+gap)
         shape=add_shape(slide,MSO_AUTO_SHAPE_TYPE.CHEVRON,x,arrow_y,width,arrow_h,shade(d.surface_color,8) if index else d.primary_color,d.primary_color)
         if index==0: shape.fill.transparency=10
-        add_text(slide,str(index+1),x+.26,arrow_y+.47,.22,.18,11,d.background_color if index==0 else d.primary_color,True,align=PP_ALIGN.CENTER)
-        add_text(slide,item.heading or f"Step {index+1}",x+.54,arrow_y+.40,width-.82,.36,text_size(item.heading or "",15,width-.82),d.text_primary if index else d.background_color,True,font=d.font_heading)
-        # The explanation gets its own surface rather than floating below the
-        # arrow. It gives each stage a visible reading boundary and uses the
-        # lower half of a 16:9 slide productively.
-        add_surface(slide,x,detail_y,width,detail_h,d,emphasis=index==0)
-        add_text(slide,"DETAIL",x+.20,detail_y+.22,width-.40,.16,9,d.primary_color,True)
-        add_text(slide,element_text(item),x+.20,detail_y+.57,width-.40,detail_h-.78,text_size(element_text(item),15,width-.40),d.text_secondary,align=PP_ALIGN.CENTER)
+        foreground=d.background_color if index==0 else d.text_primary
+        secondary=shade(d.background_color,18) if index==0 else d.text_secondary
+        add_text(slide,f"{index+1:02d}",x+.28,arrow_y+.38,.34,.18,11,foreground,True,align=PP_ALIGN.CENTER)
+        add_text(slide,item.heading or f"Step {index+1}",x+.28,arrow_y+.82,width-.65,.64,text_size(item.heading or "",18,width-.65),foreground,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.32,arrow_y+1.78,width-.72,1.46,text_size(element_text(item),15,width-.72),secondary,align=PP_ALIGN.CENTER)
 
 def cycle_loop(slide, spec, d):
     """Feedback loop diagram for recurring review, QA, and operating cycles."""
@@ -295,12 +299,13 @@ def cycle_loop(slide, spec, d):
 def isometric_stack(slide, spec, d):
     """A 2.5D native architecture stack: editable and stable across viewers."""
     items=spec.elements[:4]
+    count=max(1,len(items)); layer_h=min(1.34, (4.45-(count-1)*.10)/count)
     for index,item in enumerate(reversed(items)):
-        y=4.88-index*.78; inset=index*.36; width=8.55-index*.72
-        add_shape(slide,MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,2.38+inset,y,width,.56,shade(d.surface_color,12+index*5),d.primary_color)
-        add_text(slide,item.heading or f"Layer {len(items)-index}",2.82+inset,y+.14,width-.72,.22,17,d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        if index==0:
-            add_text(slide,element_text(item),2.92,y+.72,8.0,.34,15,d.text_secondary,align=PP_ALIGN.CENTER)
+        y=5.95-(index+1)*layer_h-index*.10; inset=index*.30; width=9.25-index*.60
+        x=2.03+inset
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.PARALLELOGRAM,x,y,width,layer_h,shade(d.surface_color,12+index*5),d.primary_color)
+        add_text(slide,item.heading or f"Layer {len(items)-index}",x+.48,y+.18,width-.96,.32,text_size(item.heading or "",18,width-.96),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.62,y+.62,width-1.24,layer_h-.76,text_size(element_text(item),13,width-1.24),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def two_columns(slide, spec, d):
     items=(spec.elements+[SlideElement(heading="",body=""),SlideElement(heading="",body="")])[:2]
@@ -314,11 +319,12 @@ def two_columns(slide, spec, d):
 
 def architecture(slide, spec, d):
     items=spec.elements[:4]
+    count=max(1,len(items)); gap=.18; layer_h=(4.55-gap*(count-1))/count
     for i,item in enumerate(items):
-        y=CONTENT_Y+i*1.0; inset=.28*i
-        add_surface(slide,MARGIN+inset,y,11.8-2*inset,.80,d,emphasis=i==0)
-        add_text(slide,item.heading or f"Layer {i+1}",MARGIN+.28+inset,y+.15,3.0,.32,18,d.primary_color,True,font=d.font_heading)
-        add_text(slide,element_text(item),MARGIN+3.42+inset,y+.17,7.8-2*inset,.34,16,d.text_secondary)
+        y=2.02+i*(layer_h+gap); inset=.28*i; x=MARGIN+inset; width=11.8-2*inset
+        add_surface(slide,x,y,width,layer_h,d,emphasis=i==0)
+        add_text(slide,item.heading or f"Layer {i+1}",x+.30,y+.18,width-.60,.30,text_size(item.heading or "",19,width-.60),d.primary_color,True,font=d.font_heading)
+        add_text(slide,element_text(item),x+.32,y+.60,width-.64,layer_h-.76,text_size(element_text(item),15,width-.64),d.text_secondary)
 
 def title_slide(slide, spec, d):
     dynamic_path=spec.visual_spec.get("image_path")

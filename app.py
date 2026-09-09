@@ -1,4 +1,5 @@
 import os, time, uuid, httpx, streamlit as st
+from datetime import datetime, timezone
 import streamlit.components.v1 as components
 from app.schemas.presentation import PresentationSpec
 from app.rendering.web_renderer import render_slide_html
@@ -9,6 +10,44 @@ st.caption("Testing mode: presentation history is tied to this browser session u
 if "access_session_id" not in st.session_state:
     st.session_state.access_session_id=uuid.uuid4().hex
 ACCESS_HEADERS={"X-SlideWeaver-Session":st.session_state.access_session_id}
+
+def retention_countdown(expires_at: str | None) -> str:
+    """Human-readable remaining retention time for the presentation library."""
+    if not expires_at:
+        return "Expiry unavailable"
+    try:
+        expires=datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            expires=expires.replace(tzinfo=timezone.utc)
+        remaining=int((expires-datetime.now(timezone.utc)).total_seconds())
+    except ValueError:
+        return "Expiry unavailable"
+    if remaining <= 0:
+        return "Expired"
+    days, remainder=divmod(remaining, 86400)
+    hours, remainder=divmod(remainder, 3600)
+    minutes=max(1, remainder // 60)
+    if days:
+        return f"T− {days}d {hours}h"
+    if hours:
+        return f"T− {hours}h {minutes}m"
+    return f"T− {minutes}m"
+
+@st.dialog("My presentations")
+def presentation_library(history: list[dict]):
+    completed=[item for item in history if item.get("status")=="COMPLETED"]
+    if not completed:
+        st.info("Completed decks will appear here.")
+        return
+    st.caption("Files are removed automatically when their retention time reaches zero.")
+    for item in completed:
+        with st.container(border=True):
+            left, right=st.columns([4, 1])
+            left.markdown(f"**{item['title']}**")
+            left.caption(f"Updated {item['updated_at'][:10]} · {retention_countdown(item.get('file_expires_at'))}")
+            if right.button("Open", key=f"open_library_{item['id']}", use_container_width=True):
+                st.session_state.job={"presentation_id":item["id"]}
+                st.rerun()
 try:
     access=httpx.post(f"{API}/api/access/claim",headers=ACCESS_HEADERS,timeout=5)
     if access.status_code == 429:
@@ -35,7 +74,6 @@ with st.sidebar:
         except (httpx.HTTPError, ValueError):
             st.caption("Visual source status is temporarily unavailable.")
     st.divider()
-    st.subheader("My presentations")
     try:
         history_response=httpx.get(f"{API}/api/presentations",headers=ACCESS_HEADERS,timeout=5,follow_redirects=True)
         history_response.raise_for_status()
@@ -43,15 +81,13 @@ with st.sidebar:
         if not isinstance(history, list):
             raise ValueError("Presentation history response was not a list")
         completed=[item for item in history if item["status"]=="COMPLETED"]
+        if st.button(f"My presentations ({len(completed)})", use_container_width=True):
+            presentation_library(history)
         if completed:
-            labels={f"{item['title']} · {item['updated_at'][:10]}":item["id"] for item in completed}
-            chosen=st.selectbox("Open a previous deck",[""]+list(labels),label_visibility="collapsed")
-            if chosen and st.button("Open selected presentation",use_container_width=True):
-                st.session_state.job={"presentation_id":labels[chosen]}
-                st.rerun()
-        else:
-            st.caption("Completed decks will appear here.")
+            st.caption(f"{len(completed)} saved deck{'s' if len(completed) != 1 else ''} · files expire automatically")
     except (httpx.HTTPError, ValueError):
+        if st.button("My presentations", use_container_width=True, disabled=True):
+            pass
         st.caption("Presentation history is temporarily unavailable.")
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy")
 if st.button("Generate presentation",type="primary",disabled=not topic.strip()):

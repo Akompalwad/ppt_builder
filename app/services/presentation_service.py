@@ -30,10 +30,19 @@ class PresentationService:
             presentations=db.scalars(
                 select(Presentation).where(Presentation.user_id==user.id).order_by(Presentation.updated_at.desc())
             ).all()
-            return [
-                {"id":p.id,"title":p.title,"status":p.status,"created_at":p.created_at.isoformat(),"updated_at":p.updated_at.isoformat()}
-                for p in presentations
-            ]
+            history=[]
+            for presentation in presentations:
+                version=db.get(PresentationVersion,presentation.current_version_id) if presentation.current_version_id else None
+                metadata=(version.spec_json or {}).get("metadata", {}) if version else {}
+                history.append({
+                    "id":presentation.id,
+                    "title":presentation.title,
+                    "status":presentation.status,
+                    "created_at":presentation.created_at.isoformat(),
+                    "updated_at":presentation.updated_at.isoformat(),
+                    "file_expires_at":metadata.get("file_expires_at"),
+                })
+            return history
     def generate(self,presentation_id:str,job_id:str,request:CreatePresentationRequest):
         # The job remains QUEUED in the database until it receives its fair
         # slot. This prevents multiple users from exhausting one shared model

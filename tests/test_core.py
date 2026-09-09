@@ -277,6 +277,32 @@ def test_web_preview_matches_pptx_two_by_two_feature_grid():
     assert "grid-template-columns:repeat(2,1fr)" in rendered
     assert "max-width:1120px" in rendered
 
+def test_chevron_flow_keeps_step_explanations_inside_the_chevrons(tmp_path):
+    spec=PresentationSpec(title="Workflow", topic="Workflow", slides=[SlideSpec(
+        slide_number=1, title="Generation workflow", purpose="Show the sequence.", layout_type=LayoutType.process_flow,
+        visual_spec={"visual_variant":"chevron_flow"},
+        elements=[{"heading":f"Step {index}", "body":"A concise explanation that belongs to this stage."} for index in range(1, 5)],
+    )])
+    output=build_presentation(spec,tmp_path/"workflow.pptx")
+    presentation=Presentation(output)
+    assert all(shape.text != "DETAIL" for shape in presentation.slides[0].shapes if shape.has_text_frame)
+    rendered=render_slide_html(spec, 1)
+    assert "flow-detail" not in rendered
+
+def test_standard_diagrams_keep_copy_inside_shapes_in_both_renderers(tmp_path):
+    elements=[{"heading":f"Layer {index}", "body":"A concise explanation contained by the diagram shape."} for index in range(1, 4)]
+    for layout in (LayoutType.architecture_layers, LayoutType.process_flow):
+        spec=PresentationSpec(title="Diagrams", topic="Diagrams", slides=[SlideSpec(
+            slide_number=1, title="System diagram", purpose="Show the system.", layout_type=layout, elements=elements,
+        )])
+        output=build_presentation(spec,tmp_path/f"{layout.value}.pptx")
+        presentation=Presentation(output)
+        body_shapes=[shape for shape in presentation.slides[0].shapes if shape.has_text_frame and shape.text.startswith("A concise explanation")]
+        assert len(body_shapes) == 3
+        rendered=render_slide_html(spec, 1)
+        expected="architecture-layers" if layout == LayoutType.architecture_layers else "standard-flow"
+        assert expected in rendered
+
 def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
     spec=PresentationSpec(title="Response time", topic="SOC", slides=[SlideSpec(
         slide_number=1, title="MTTR trend", purpose="Source-backed response time trend.", layout_type=LayoutType.key_metrics,
@@ -287,7 +313,7 @@ def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
     assert any(shape.has_chart for shape in presentation.slides[0].shapes)
     assert "native-chart-preview" in render_slide_html(spec, 1)
 
-def test_chevron_flow_places_step_details_inside_aligned_surfaces(tmp_path):
+def test_chevron_flow_places_step_details_inside_enlarged_chevrons(tmp_path):
     spec=PresentationSpec(title="Pipeline", topic="SOC", slides=[SlideSpec(
         slide_number=1, title="Incident Response Pipeline", purpose="Show the response sequence.", layout_type=LayoutType.step_workflow,
         visual_spec={"visual_variant":"chevron_flow"},
@@ -297,8 +323,8 @@ def test_chevron_flow_places_step_details_inside_aligned_surfaces(tmp_path):
     presentation=Presentation(output)
     bodies=[shape for shape in presentation.slides[0].shapes if shape.has_text_frame and shape.text.startswith("Detailed operational")]
     assert len(bodies) == 4
-    assert all(shape.top / 914400 >= 4.2 and (shape.top+shape.height) / 914400 <= 5.9 for shape in bodies)
-    assert "flow-detail" in render_slide_html(spec, 1)
+    assert all(shape.top / 914400 >= 3.8 and (shape.top+shape.height) / 914400 <= 5.5 for shape in bodies)
+    assert "flow-detail" not in render_slide_html(spec, 1)
 
 def test_request_accepts_a_detailed_structured_brief():
     request=CreatePresentationRequest(topic="{" + '"slides":[],' * 700 + "}")
