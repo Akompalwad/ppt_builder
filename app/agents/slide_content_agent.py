@@ -30,6 +30,53 @@ class SlideContentAgent:
             preserved.append(merged)
         return preserved
 
+    @staticmethod
+    def _complete_slide_payload(slide: SlideSpec, directive, generated: object) -> dict:
+        """Repair partial provider output before strict SlideSpec validation.
+
+        Some reasoning models intermittently return an element-like JSON object
+        (for example ``{"type": "comparison_group", ...}``) despite the
+        one-slide contract. The pipeline already knows the slide number,
+        requested title, layout, and baseline purpose, so preserve those
+        authoritative fields instead of discarding a whole deck.
+        """
+        payload=generated if isinstance(generated, dict) else {}
+        fallback=directive.seed() if directive else slide
+        repairs=[]
+        title=directive.title if directive else payload.get("title")
+        if not isinstance(title, str) or not title.strip():
+            title=fallback.title
+            repairs.append("title")
+        purpose=payload.get("purpose")
+        if not isinstance(purpose, str) or not purpose.strip():
+            purpose=fallback.purpose or f"Explain {title} for the audience."
+            repairs.append("purpose")
+        elements=payload.get("elements")
+        if not isinstance(elements, list):
+            elements=[item.model_dump() for item in fallback.elements]
+            repairs.append("elements")
+        visual_spec=payload.get("visual_spec")
+        if not isinstance(visual_spec, dict):
+            visual_spec={}
+            repairs.append("visual_spec")
+        return {
+            **payload,
+            "slide_number":slide.slide_number,
+            "title":title,
+            "subtitle":directive.subtitle if directive else payload.get("subtitle"),
+            "purpose":purpose,
+            # Layout selection belongs to the storyline/design pipeline, not
+            # an occasionally malformed content completion.
+            "layout_type":directive.layout_type.value if directive else fallback.layout_type.value,
+            "elements":elements,
+            "visual_spec":{**slide.visual_spec, **visual_spec},
+            "metadata":{
+                **slide.metadata,
+                "brief_layout_locked":bool(directive),
+                **({"provider_response_repaired":repairs} if repairs else {}),
+            },
+        }
+
     def generate(
         self,
         request: CreatePresentationRequest,
@@ -88,18 +135,12 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
 Use zero or one element for the title slide, and 2–3 elements for other slides (four only for comparisons). Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context".'''
             max_tokens=get_settings().gemini_max_output_tokens if provider == "gemini" else 1200
             generated=gateway.generate_json(prompt, max_tokens=max_tokens, temperature=.1)
-            if directive and (directive.elements or directive.requirements):
+            if directive and (directive.elements or directive.requirements) and isinstance(generated, dict):
                 generated["elements"]=self._preserve_contract_elements(directive, generated)
             # The Storyline and Design agents own layout selection. Models
             # occasionally echo the JSON-schema placeholder ("...") for this
             # field, which should never invalidate otherwise usable content.
-            spec.slides[slide.slide_number-1]=SlideSpec.model_validate({
-                **generated,
-                "slide_number":slide.slide_number,
-                "title":directive.title if directive else generated.get("title"),
-                "subtitle":directive.subtitle if directive else generated.get("subtitle"),
-                "layout_type":directive.layout_type.value if directive else slide.layout_type.value,
-                "visual_spec":{**slide.visual_spec, **(generated.get("visual_spec") or {})},
-                "metadata":{**slide.metadata, "brief_layout_locked":bool(directive)},
-            })
+            spec.slides[slide.slide_number-1]=SlideSpec.model_validate(
+                self._complete_slide_payload(slide, directive, generated)
+            )
         return spec

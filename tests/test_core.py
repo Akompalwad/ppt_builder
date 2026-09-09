@@ -268,6 +268,19 @@ def test_slide_content_contract_restores_items_missing_from_model_response():
     assert [item["heading"] for item in restored] == ["Context", "Containment"]
     assert restored[0]["body"] == "Model-expanded context."
 
+def test_slide_content_repairs_a_component_fragment_before_slide_validation():
+    source=SlideSpec(slide_number=2, title="Fallback title", purpose="Fallback purpose.", layout_type=LayoutType.feature_grid)
+    payload=SlideContentAgent._complete_slide_payload(
+        source,
+        None,
+        {"type":"comparison_group", "title":None, "elements":{"left":"Manual", "right":"AI"}},
+    )
+    repaired=SlideSpec.model_validate(payload)
+    assert repaired.title == "Fallback title"
+    assert repaired.purpose == "Fallback purpose."
+    assert repaired.layout_type == LayoutType.feature_grid
+    assert repaired.metadata["provider_response_repaired"] == ["title", "purpose", "elements", "visual_spec"]
+
 def test_web_preview_matches_pptx_two_by_two_feature_grid():
     spec=PresentationSpec(title="Capabilities", topic="SOC", slides=[SlideSpec(
         slide_number=1, title="Core Capabilities", purpose="Show the platform pillars.", layout_type=LayoutType.feature_grid,
