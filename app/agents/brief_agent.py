@@ -74,9 +74,20 @@ class PromptClassification(BaseModel):
 class BriefInterpreterAgent:
     """Extract `Slide N:` contracts and their requested content from a prompt."""
 
+    @staticmethod
+    def _normalize_markdown(prompt: str) -> str:
+        """Make ordinary Markdown briefs look like the plain-text contract grammar."""
+        lines=[]
+        for raw in prompt.splitlines():
+            line=raw.strip().replace("**", "").replace("__", "")
+            line=re.sub(r"^(?:[-*•]\s*)", "", line)
+            lines.append(line)
+        return "\n".join(lines)
+
     def classify(self, prompt: str) -> PromptClassification:
-        numbers=[int(number) for number in re.findall(r"(?im)^\s*slide\s+(\d+)\s*:", prompt)]
-        fields=re.findall(r"(?im)^\s*(?:title|subtitle|layout|topic areas|steps to cover|tiers to cover|key outcomes)\s*:", prompt)
+        normalized=self._normalize_markdown(prompt)
+        numbers=[int(number) for number in re.findall(r"(?im)^\s*slide\s+(\d+)\s*:", normalized)]
+        fields=re.findall(r"(?im)^\s*(?:title|subtitle|layout|topic areas|steps to cover|tiers to cover|key outcomes)\s*:", normalized)
         if '"slides"' in prompt and '"slide_number"' in prompt:
             return PromptClassification(
                 mode="structured",
@@ -130,8 +141,8 @@ class BriefInterpreterAgent:
         # Stop at the next labelled field, while retaining ordinary plain-text
         # item lines such as "Alert Ingestion (...)".
         tail=re.split(r"(?im)^\s*(?:Title|Subtitle|Layout|Topic Areas|Steps to cover|Tiers to cover|Key Outcomes)\s*:", tail, maxsplit=1)[0]
-        first=match.group(1).strip()
-        lines=([first] if first else []) + [line.strip(" -•\t") for line in tail.splitlines() if line.strip()]
+        first=re.sub(r"^\d+[.)]\s*", "", match.group(1).strip())
+        lines=([first] if first else []) + [re.sub(r"^\d+[.)]\s*", "", line.strip(" -•\t")) for line in tail.splitlines() if line.strip()]
         return [line for line in lines if line and not line.lower().startswith(("ensure ", "please "))]
 
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
@@ -162,13 +173,14 @@ class BriefInterpreterAgent:
                 ))
             if slides:
                 return PresentationBrief(slides=slides, deck_title=payload.get("title"))
-        sections=list(re.finditer(r"(?im)^\s*slide\s+(\d+)\s*:\s*([^\n]+)", prompt))
+        normalized=self._normalize_markdown(prompt)
+        sections=list(re.finditer(r"(?im)^\s*slide\s+(\d+)\s*:\s*([^\n]+)", normalized))
         slides=[]
         for index, match in enumerate(sections):
             number=int(match.group(1))
             if number < 1 or number > requested_count:
                 continue
-            section=prompt[match.end():sections[index+1].start() if index+1 < len(sections) else len(prompt)]
+            section=normalized[match.end():sections[index+1].start() if index+1 < len(sections) else len(normalized)]
             layout_text=(self._lines_after(section, "Layout") or [match.group(2).strip()])[0].lower()
             layout=next((value for phrase, value in _LAYOUTS.items() if phrase in layout_text), LayoutType.feature_grid)
             title=(self._lines_after(section, "Title") or [match.group(2).strip()])[0]

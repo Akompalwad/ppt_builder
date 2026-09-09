@@ -174,6 +174,28 @@ def test_brief_classifier_distinguishes_structured_and_open_ended_prompts():
     assert structured.detected_slide_numbers == [1, 2]
     assert generic.mode == "open_ended"
 
+def test_brief_classifier_recognizes_markdown_slide_contracts():
+    prompt='''**Slide 1: Title Slide**
+- Title: Autonomous Alert Triage Platform
+- Subtitle: Transforming SOC Operations
+
+**Slide 2: Core Capabilities**
+- Layout: Feature Grid (4 items)
+- Topic Areas:
+1. Context Enrichment (correlate telemetry)
+2. Investigation Plans (triage paths)
+3. Safeguards (analyst approval)
+4. Playbooks (retrospectives)'''
+    agent=BriefInterpreterAgent()
+    brief=agent.interpret(prompt, 6)
+    assert agent.classify(prompt).mode == "structured"
+    assert brief.by_number(1).title == "Autonomous Alert Triage Platform"
+    assert brief.by_number(2).layout_type == LayoutType.feature_grid
+    assert brief.by_number(2).requirements == [
+        "Context Enrichment (correlate telemetry)", "Investigation Plans (triage paths)",
+        "Safeguards (analyst approval)", "Playbooks (retrospectives)",
+    ]
+
 def test_brief_interpreter_protects_embedded_json_slide_schema():
     prompt='''Use this JSON schema:
     {"title":"Agentic AI Alert Response Platform","slides":[
