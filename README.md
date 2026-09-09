@@ -1,6 +1,6 @@
 # SlideWeaver
 
-An asynchronous, version-ready Python foundation for editable AI-generated PowerPoint decks.
+An asynchronous, version-ready Python (3.12) foundation for editable AI-generated PowerPoint decks.
 
 ## Run locally
 

@@ -45,3 +45,11 @@ curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b
       "responseMimeType": "application/json"
     }
   }'
+
+
+  # Deploy in provider
+
+cd /home/opc/code/ppt_builder
+git fetch origin
+git reset --hard origin/main
+sudo systemctl restart slideweaver-api slideweaver-ui

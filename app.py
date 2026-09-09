@@ -6,13 +6,103 @@ from app.rendering.web_renderer import render_slide_html
 st.set_page_config(page_title="SlideWeaver",page_icon="▣",layout="wide")
 API=os.getenv("API_URL","http://localhost:8000")
 PROJECT_GITHUB_URL="https://github.com/Akompalwad/ppt_builder"
+GITHUB_PROFILE_URL="https://github.com/Akompalwad"
+st.markdown("""
+<style>
+  [data-testid="stAppViewContainer"] {
+    background:
+      radial-gradient(circle at 77% 3%, rgba(82, 87, 255, .18), transparent 25%),
+      radial-gradient(circle at 33% 18%, rgba(35, 234, 199, .12), transparent 26%),
+      linear-gradient(145deg, #070b14 0%, #0a1222 48%, #07111b 100%);
+    color: #dce9f5;
+  }
+  [data-testid="stHeader"] { background: transparent; }
+  [data-testid="stMainBlockContainer"] {
+    max-width: 1380px;
+    padding-top: 2.4rem;
+    background-image: linear-gradient(rgba(103, 224, 211, .025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(103, 224, 211, .025) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+  [data-testid="stAppViewContainer"] h1,
+  [data-testid="stAppViewContainer"] h2,
+  [data-testid="stAppViewContainer"] h3 { color: #effaff; }
+  [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] p,
+  [data-testid="stAppViewContainer"] label { color: #b8cbe0; }
+  [data-testid="stAppViewContainer"] [data-testid="stTextArea"] textarea,
+  [data-testid="stAppViewContainer"] [data-testid="stTextInput"] input {
+    background: rgba(7, 20, 35, .78);
+    color: #effaff;
+    border-color: rgba(77, 224, 207, .34);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  [data-testid="stAppViewContainer"] [data-testid="stButton"] > button[kind="primary"] {
+    border: 1px solid rgba(74, 242, 209, .76);
+    background: linear-gradient(105deg, #137a81, #3149ad);
+    box-shadow: 0 9px 28px rgba(23, 196, 192, .23);
+  }
+  [data-testid="stAppViewContainer"] [data-testid="stExpander"],
+  [data-testid="stAppViewContainer"] [data-testid="stVerticalBlockBorderWrapper"] {
+    background: rgba(12, 27, 45, .56);
+    border-color: rgba(90, 221, 209, .20);
+  }
+  [data-testid="stSidebar"] {
+    background:
+      radial-gradient(circle at 14% 0%, rgba(45, 225, 202, .20), transparent 27%),
+      radial-gradient(circle at 90% 18%, rgba(104, 87, 255, .19), transparent 29%),
+      linear-gradient(160deg, #07111f 0%, #0b1728 51%, #07101d 100%);
+    border-right: 1px solid rgba(94, 224, 210, .20);
+  }
+  [data-testid="stSidebar"] > div:first-child {
+    background-image: linear-gradient(rgba(103, 224, 211, .035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(103, 224, 211, .035) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+  [data-testid="stSidebar"] label { color: #c5d6e9; }
+  [data-testid="stSidebar"] [data-testid="stSelectbox"] > div > div,
+  [data-testid="stSidebar"] [data-testid="stTextInput"] input,
+  [data-testid="stSidebar"] [data-testid="stSlider"] {
+    border-color: rgba(77, 224, 207, .35) !important;
+  }
+  [data-testid="stSidebar"] [data-testid="stButton"] > button,
+  [data-testid="stSidebar"] [data-testid="stLinkButton"] a {
+    min-height: 2.6rem;
+    border: 1px solid rgba(70, 232, 211, .40) !important;
+    border-radius: .65rem !important;
+    background: linear-gradient(110deg, rgba(31, 82, 103, .50), rgba(32, 43, 92, .54)) !important;
+    color: #e8ffff !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 8px 22px rgba(0,0,0,.18);
+    transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+  }
+  [data-testid="stSidebar"] [data-testid="stButton"] > button:hover,
+  [data-testid="stSidebar"] [data-testid="stLinkButton"] a:hover {
+    border-color: #38f5d0 !important;
+    box-shadow: 0 0 0 2px rgba(56,245,208,.13), 0 10px 26px rgba(0,0,0,.27);
+    transform: translateY(-1px);
+  }
+  [data-testid="stSidebar"] hr { border-color: rgba(93, 225, 208, .24); }
+  .sidebar-console {
+    margin: -.55rem 0 1.3rem;
+    padding: 1rem;
+    border: 1px solid rgba(78, 234, 212, .30);
+    border-radius: .82rem;
+    background: linear-gradient(135deg, rgba(16, 44, 63, .78), rgba(17, 21, 59, .72));
+    box-shadow: 0 14px 34px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .sidebar-console .label { color: #63f4d7; font-size: .68rem; font-weight: 800; letter-spacing: .16em; }
+  .sidebar-console .name { margin-top: .25rem; color: #f4fbff; font-size: 1.28rem; font-weight: 750; letter-spacing: -.03em; }
+  .sidebar-console .status { margin-top: .55rem; color: #abc3d8; font-size: .72rem; }
+  .sidebar-console .dot { display:inline-block; width:.48rem; height:.48rem; margin-right:.42rem; border-radius:50%; background:#39f3c5; box-shadow:0 0 12px #39f3c5; }
+</style>
+""", unsafe_allow_html=True)
 
 @st.dialog("About SlideWeaver")
 def about_slideweaver():
     st.subheader("SlideWeaver")
     st.write("An AI-assisted workspace for creating polished, editable PowerPoint presentations.")
-    st.markdown("**Developer:** [Ajay Kompalwad](https://github.com/Akompalwad)")
-    st.link_button("Open developer profile", "https://github.com/Akompalwad", use_container_width=True)
+    st.markdown(f"**Developer:** [Ajay Kompalwad]({GITHUB_PROFILE_URL})")
+    st.link_button("Open developer profile", GITHUB_PROFILE_URL, use_container_width=True)
     st.link_button("Open project repository", PROJECT_GITHUB_URL, use_container_width=True)
 
 st.title("SlideWeaver")
@@ -69,10 +159,7 @@ except httpx.HTTPError:
     st.error("Could not verify testing access. Start the API and try again.")
     st.stop()
 with st.sidebar:
-    if st.button("About SlideWeaver", use_container_width=True):
-        about_slideweaver()
-    st.link_button("View on GitHub", PROJECT_GITHUB_URL, use_container_width=True)
-    st.divider()
+    st.markdown("""<div class="sidebar-console"><div class="label">AI PRESENTATION STUDIO</div><div class="name">SLIDEWEAVER</div><div class="status"><span class="dot"></span>SYSTEM READY</div></div>""", unsafe_allow_html=True)
     # Local Ollama remains an opt-in server-side contingency only. Users choose
     # between the two supported cloud agent sources.
     provider=st.selectbox("Provider",["Gemini","NVIDIA"])
@@ -89,6 +176,8 @@ with st.sidebar:
         except (httpx.HTTPError, ValueError):
             st.caption("Visual source status is temporarily unavailable.")
     st.divider()
+    history=None
+    completed=[]
     try:
         history_response=httpx.get(f"{API}/api/presentations",headers=ACCESS_HEADERS,timeout=5,follow_redirects=True)
         history_response.raise_for_status()
@@ -96,14 +185,27 @@ with st.sidebar:
         if not isinstance(history, list):
             raise ValueError("Presentation history response was not a list")
         completed=[item for item in history if item["status"]=="COMPLETED"]
-        if st.button(f"My presentations ({len(completed)})", use_container_width=True):
-            presentation_library(history)
         if completed:
             st.caption(f"{len(completed)} saved deck{'s' if len(completed) != 1 else ''} · files expire automatically")
     except (httpx.HTTPError, ValueError):
-        if st.button("My presentations", use_container_width=True, disabled=True):
-            pass
         st.caption("Presentation history is temporarily unavailable.")
+    with st.container(key="sidebar-action-rail", gap=6):
+        if history is not None:
+            if st.button(f"📚  My presentations ({len(completed)})", use_container_width=True):
+                presentation_library(history)
+        else:
+            st.button("📚  My presentations", use_container_width=True, disabled=True)
+        if st.button("ⓘ  About SlideWeaver", use_container_width=True):
+            about_slideweaver()
+        st.markdown(
+            f'''<a href="{GITHUB_PROFILE_URL}" target="_blank" rel="noopener noreferrer"
+            aria-label="GitHub profile: Akompalwad"
+            style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:.62rem .75rem;
+            border:1px solid rgba(70,232,211,.40);border-radius:.65rem;color:#e8ffff;text-decoration:none;font-weight:600;
+            background:linear-gradient(110deg,rgba(31,82,103,.50),rgba(32,43,92,.54));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 22px rgba(0,0,0,.18);">
+            <img src="https://github.githubassets.com/favicons/favicon.svg" alt="GitHub" width="18" height="18">Akompalwad</a>''',
+            unsafe_allow_html=True,
+        )
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy")
 if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
     try:
