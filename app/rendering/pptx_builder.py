@@ -472,11 +472,7 @@ def section_interlude(slide, spec, d):
     add_text(slide,spec.subtitle or spec.purpose,MARGIN,3.35,6.7,.52,19,d.text_secondary,font=d.font_body)
 
 def add_slide_transition(slide, transition_name: str | None):
-    """Write supported native PowerPoint slide transitions into the OOXML.
-
-    Element-level animation is intentionally not fabricated here: it has a
-    substantially more complex timing model and is not supported by python-pptx.
-    """
+    """Write a supported between-slide transition into PresentationML."""
     name=(transition_name or "fade").lower()
     if name not in {"fade", "push", "wipe"}: name="fade"
     transition=OxmlElement("p:transition")
@@ -486,6 +482,105 @@ def add_slide_transition(slide, transition_name: str | None):
     if name in {"push", "wipe"}: effect.set("dir", "l")
     transition.append(effect)
     slide._element.insert_element_before(transition, "p:timing", "p:extLst")
+
+def _timing_element(tag: str, **attributes):
+    element=OxmlElement(tag)
+    for key, value in attributes.items():
+        element.set(key, str(value))
+    return element
+
+def _start_conditions(delay: str = "indefinite"):
+    conditions=_timing_element("p:stCondLst")
+    conditions.append(_timing_element("p:cond", delay=delay))
+    return conditions
+
+def _shape_ids_for_text(slide, value: str, used: set[int]) -> list[int]:
+    """Resolve rendered text into component shape IDs without guessing order."""
+    if not value:
+        return []
+    for shape in slide.shapes:
+        if not getattr(shape, "has_text_frame", False) or shape.shape_id in used:
+            continue
+        if shape.text.strip() == clean_copy(value).strip():
+            used.add(shape.shape_id)
+            return [shape.shape_id]
+    return []
+
+def _animation_groups(slide, spec: SlideSpec) -> list[list[int]]:
+    """Choose readable component groups, capped so slides never feel busy."""
+    used: set[int]=set()
+    groups=[]
+    title=_shape_ids_for_text(slide, spec.title, used)
+    if title:
+        groups.append(title)
+    if spec.layout_type.value == "title_slide":
+        subtitle=_shape_ids_for_text(slide, spec.subtitle or spec.purpose, used)
+        if subtitle:
+            groups.append(subtitle)
+        return groups[:2]
+    for item in spec.elements[:3]:
+        group=[]
+        group.extend(_shape_ids_for_text(slide, item.heading or item.label or "", used))
+        group.extend(_shape_ids_for_text(slide, element_text(item), used))
+        if group:
+            groups.append(group)
+    return groups[:4]
+
+def _entrance_filter(spec: SlideSpec) -> str:
+    """Map narrative grammar to restrained native PowerPoint entrance effects."""
+    layout=spec.layout_type.value
+    stage=str(spec.visual_spec.get("story_stage", "")).lower()
+    if spec.visual_spec.get("visual_variant") == "chevron_flow" or layout in {"step_workflow", "process_flow", "timeline"}:
+        return "wipe(left)"
+    if layout == "architecture_layers" or spec.visual_spec.get("visual_variant") == "isometric_stack":
+        return "wipe(up)"
+    if layout in {"comparison", "two_column"} or stage in {"decision lenses", "investor scenarios", "trade-offs"}:
+        return "fade"
+    if layout in {"key_metrics", "dashboard"} or stage in {"evidence", "outcome"}:
+        return "fade"
+    return "fade"
+
+def add_component_animations(slide, spec: SlideSpec):
+    """Attach click-to-reveal entrance effects to the slide's real components.
+
+    `python-pptx` does not expose animations. This writes the standard
+    PresentationML timing hierarchy directly, with every component group held
+    behind one click. It deliberately animates text groups only: backgrounds,
+    gradients, and decorative geometry stay stable across viewers.
+    """
+    groups=_animation_groups(slide, spec)
+    if not groups or slide._element.find("p:timing", slide._element.nsmap) is not None:
+        return
+    timing=_timing_element("p:timing")
+    timing_list=_timing_element("p:tnLst"); timing.append(timing_list)
+    root_parallel=_timing_element("p:par"); timing_list.append(root_parallel)
+    root=_timing_element("p:cTn", id="1", dur="indefinite", restart="never", nodeType="tmRoot")
+    root_parallel.append(root)
+    root_children=_timing_element("p:childTnLst"); root.append(root_children)
+    sequence=_timing_element("p:seq", concurrent="1", nextAc="seek"); root_children.append(sequence)
+    main=_timing_element("p:cTn", id="2", dur="indefinite", nodeType="mainSeq")
+    sequence.append(main)
+    main_children=_timing_element("p:childTnLst"); main.append(main_children)
+    effect_filter=_entrance_filter(spec)
+    next_id=3
+    for group in groups:
+        click_parallel=_timing_element("p:par"); main_children.append(click_parallel)
+        click_node=_timing_element("p:cTn", id=str(next_id), fill="hold"); next_id+=1
+        click_parallel.append(click_node); click_node.append(_start_conditions())
+        click_children=_timing_element("p:childTnLst"); click_node.append(click_children)
+        simultaneous=_timing_element("p:par"); click_children.append(simultaneous)
+        simultaneous_node=_timing_element("p:cTn", id=str(next_id), fill="hold"); next_id+=1
+        simultaneous.append(simultaneous_node); simultaneous_node.append(_start_conditions("0"))
+        effects=_timing_element("p:childTnLst"); simultaneous_node.append(effects)
+        for shape_id in group:
+            effect=_timing_element("p:animEffect", transition="in", filter=effect_filter)
+            effects.append(effect)
+            behavior=_timing_element("p:cBhvr"); effect.append(behavior)
+            behavior.append(_timing_element("p:cTn", id=str(next_id), dur="420", fill="hold")); next_id+=1
+            target=_timing_element("p:tgtEl"); behavior.append(target)
+            target.append(_timing_element("p:spTgt", spid=str(shape_id)))
+    # OOXML order is transition then timing then extension list.
+    slide._element.insert_element_before(timing, "p:extLst")
 
 def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
     prs=Presentation(); prs.slide_width=Inches(W); prs.slide_height=Inches(H); blank=prs.slide_layouts[6]; d=spec.design_system
@@ -513,4 +608,5 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
             else: grid_cards(slide,spec_slide,d)
         add_text(slide,str(spec_slide.slide_number),12.05,6.92,.42,.18,9,d.muted_text,True,align=PP_ALIGN.RIGHT)
         add_slide_transition(slide, spec_slide.visual_spec.get("transition"))
+        add_component_animations(slide, spec_slide)
     path=Path(destination); path.parent.mkdir(parents=True,exist_ok=True); prs.save(path); return path

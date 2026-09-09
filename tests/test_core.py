@@ -303,6 +303,19 @@ def test_standard_diagrams_keep_copy_inside_shapes_in_both_renderers(tmp_path):
         expected="architecture-layers" if layout == LayoutType.architecture_layers else "standard-flow"
         assert expected in rendered
 
+def test_component_animations_are_native_and_capped(tmp_path):
+    spec=PresentationSpec(title="Response", topic="SOC", slides=[SlideSpec(
+        slide_number=1, title="Response workflow", purpose="Show stages.", layout_type=LayoutType.process_flow,
+        visual_spec={"story_stage":"response lifecycle"},
+        elements=[{"heading":f"Stage {index}", "body":"A complete explanation for the stage."} for index in range(1, 5)],
+    )])
+    output=build_presentation(spec,tmp_path/"animated.pptx")
+    with zipfile.ZipFile(output) as archive:
+        xml=archive.read("ppt/slides/slide1.xml")
+    assert b"<p:timing>" in xml
+    assert xml.count(b"<p:animEffect") <= 7  # title + three content groups, each with heading/body
+    assert b'filter="wipe(left)"' in xml
+
 def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
     spec=PresentationSpec(title="Response time", topic="SOC", slides=[SlideSpec(
         slide_number=1, title="MTTR trend", purpose="Source-backed response time trend.", layout_type=LayoutType.key_metrics,

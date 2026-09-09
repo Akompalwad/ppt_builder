@@ -22,7 +22,7 @@ class DesignDecision(BaseModel):
 class DesignPlan(BaseModel):
     decisions: list[DesignDecision]
     source: str = "deterministic"
-    animation_note: str = "PowerPoint slide transitions are exported. Element reveal sequences remain a design brief for the current renderer."
+    animation_note: str = "PowerPoint exports a capped, story-aware sequence of native entrance animations for meaningful text components."
 
 class _DesignChoice(BaseModel):
     slide_number: int
