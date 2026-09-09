@@ -1,4 +1,4 @@
-# DeckForge
+# SlideWeaver
 
 An asynchronous, version-ready Python foundation for editable AI-generated PowerPoint decks.
 
