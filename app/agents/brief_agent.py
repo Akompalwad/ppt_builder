@@ -23,6 +23,7 @@ _LAYOUTS={
     "comparison": LayoutType.comparison,
     "two column": LayoutType.two_column,
     "key metrics": LayoutType.key_metrics,
+    "dashboard": LayoutType.dashboard,
     "summary": LayoutType.summary,
     "timeline": LayoutType.timeline,
 }
@@ -180,7 +181,11 @@ class BriefInterpreterAgent:
         slides=[]
         for index, match in enumerate(sections):
             number=int(match.group(1))
-            if number < 1 or number > requested_count:
+            # The numbered contract, not the Streamlit slider's default,
+            # determines deck length. This lets a user paste a complete
+            # ten-slide brief while the sidebar still shows its six-slide
+            # default. Keep the public API's documented maximum of ten.
+            if number < 1 or number > 10:
                 continue
             section=normalized[match.end():sections[index+1].start() if index+1 < len(sections) else len(normalized)]
             layout_text=(self._lines_after(section, "Layout") or [match.group(2).strip()])[0].lower()

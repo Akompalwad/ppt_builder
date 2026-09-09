@@ -25,6 +25,15 @@ with st.sidebar:
     theme=st.selectbox("Theme",["Auto","Cyber Dark","Minimalist White","Corporate Blue"]); count=st.slider("Slides",3,10,6)
     audience=st.text_input("Audience","General audience"); tone=st.selectbox("Tone",["Professional","Executive","Educational","Persuasive"])
     include_images=st.checkbox("Use topic-specific Unsplash visuals",value=True,help="Uses Unsplash when configured; at most three visuals per deck. Native editable visuals remain the fallback.")
+    if include_images:
+        try:
+            image_status=httpx.get(f"{API}/api/llm/image-status",headers=ACCESS_HEADERS,timeout=5).json()
+            if image_status.get("ready"):
+                st.caption(f"Visual source: {image_status['provider'].title()} ready")
+            else:
+                st.warning(image_status.get("message", "Topic-specific visuals are unavailable."))
+        except (httpx.HTTPError, ValueError):
+            st.caption("Visual source status is temporarily unavailable.")
     st.divider()
     st.subheader("My presentations")
     try:

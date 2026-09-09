@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.llm.gateway import LLMGateway
 from app.api.routes.access import require_active_session
+from app.services.image_service import ImageService
 
 router=APIRouter(prefix="/api/llm",tags=["llm"])
 
@@ -12,3 +13,8 @@ def llm_status(provider: str = Query("nvidia"), model: str | None = Query(None),
         return {"provider":provider, "model":model, **result}
     except Exception:
         raise HTTPException(status_code=503, detail="The selected LLM provider/model is not currently available.")
+
+@router.get("/image-status")
+def image_status(_: str = Depends(require_active_session)):
+    """Expose image readiness without exposing credentials or calling Unsplash."""
+    return ImageService().status()

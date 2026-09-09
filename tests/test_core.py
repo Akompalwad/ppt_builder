@@ -10,6 +10,8 @@ from app.rendering.web_renderer import render_slide_html
 from app.agents.qa_agent import PresentationQAAgent, summarize_point
 from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
 from app.agents.design_agent import DesignDirectorAgent
+from app.services.image_service import ImageService
+from app.config import Settings
 from pptx import Presentation
 def test_fallback_and_pptx(tmp_path):
     spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic="AI adoption",slide_count=4))
@@ -134,6 +136,14 @@ def test_minimalist_and_corporate_themes_are_visually_distinct():
     assert minimalist.primary_color != corporate.primary_color
     assert minimalist.header_color != corporate.header_color
 
+def test_unsplash_status_explains_a_missing_server_key():
+    service=ImageService()
+    service.settings=Settings(image_provider="unsplash", unsplash_access_key="")
+    status=service.status()
+    assert status["provider"] == "unsplash"
+    assert status["ready"] is False
+    assert "UNSPLASH_ACCESS_KEY" in status["message"]
+
 def test_generation_progress_names_active_agents():
     events=[]
     PresentationOrchestrator().generate(
@@ -215,6 +225,17 @@ def test_brief_classifier_recognizes_markdown_slide_contracts():
         "Context Enrichment (correlate telemetry)", "Investigation Plans (triage paths)",
         "Safeguards (analyst approval)", "Playbooks (retrospectives)",
     ]
+
+def test_brief_contract_overrides_the_default_slide_slider_up_to_ten():
+    prompt="\n".join(
+        f"Slide {number}: Slide {number} title\nLayout: {'Dashboard' if number == 8 else 'Feature Grid'}"
+        for number in range(1, 11)
+    )
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=6)
+    assert len(brief.slides) == 10
+    assert brief.by_number(8).layout_type == LayoutType.dashboard
+    spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic=prompt, slide_count=6))
+    assert len(spec.slides) == 10
 
 def test_brief_interpreter_protects_embedded_json_slide_schema():
     prompt='''Use this JSON schema:
