@@ -134,9 +134,18 @@ def logout(x_slideweaver_session: str | None = Header(default=None)):
         with SessionLocal() as db:
             oauth_session=db.get(OAuthSession, x_slideweaver_session)
             if oauth_session:
-                db.delete(oauth_session)
-            access_session=db.get(ActiveAccessSession, x_slideweaver_session)
-            if access_session:
-                db.delete(access_session)
+                # A Google account can have sessions from more than one tab or
+                # browser. Signing out must revoke them all, otherwise the
+                # Admin panel still correctly sees that account as active.
+                session_ids=list(db.scalars(select(OAuthSession.session_id).where(OAuthSession.user_id == oauth_session.user_id)))
+                for session_id in session_ids:
+                    active_session=db.get(ActiveAccessSession, session_id)
+                    if active_session:
+                        db.delete(active_session)
+                db.query(OAuthSession).filter(OAuthSession.user_id == oauth_session.user_id).delete()
+            else:
+                access_session=db.get(ActiveAccessSession, x_slideweaver_session)
+                if access_session:
+                    db.delete(access_session)
             db.commit()
     return {"status":"logged_out"}
