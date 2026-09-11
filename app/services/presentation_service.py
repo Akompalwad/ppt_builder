@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 from sqlalchemy import select
-from app.models.database import GenerationJob, Presentation, PresentationVersion, SessionLocal, User
+from app.models.database import GenerationJob, OAuthSession, Presentation, PresentationVersion, SessionLocal, User
 from app.schemas.presentation import CreatePresentationRequest, PresentationSpec
 from app.agents.orchestrator import PresentationOrchestrator
 from app.agents.qa_agent import PresentationQAAgent
@@ -14,8 +14,13 @@ from app.services.generation_queue import shared_generation_queue
 DEV_EMAIL="local@example.test"
 class PresentationService:
     def _user(self, db, session_id: str):
-        # Google OAuth is intentionally disabled during testing. Isolate data
-        # by the claimed browser session until a real identity provider is on.
+        oauth_session=db.get(OAuthSession, session_id)
+        if oauth_session:
+            user=db.get(User, oauth_session.user_id)
+            if user:
+                return user
+        # In development mode, isolate data by browser session until a real
+        # identity provider is enabled.
         email=f"session-{session_id}@local.slideweaver" if session_id != "development" else DEV_EMAIL
         user=db.scalar(select(User).where(User.email==email))
         if not user: user=User(email=email,display_name="Testing User",provider="session"); db.add(user); db.flush()

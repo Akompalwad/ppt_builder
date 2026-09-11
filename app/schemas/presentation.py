@@ -1,6 +1,6 @@
 from __future__ import annotations
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 from pydantic import BaseModel, Field, field_validator
 
@@ -32,3 +32,15 @@ class CreatePresentationRequest(BaseModel):
     # prevents accidental/unbounded payloads without rejecting a normal
     # five-to-ten-slide technical brief.
     topic: str = Field(min_length=3, max_length=16000); slide_count: int = Field(default=6, ge=3, le=10); theme: str = "Auto"; provider: str | None = None; model: str | None = None; audience: str = "General audience"; tone: str = "Professional"; language: str = "English"; email_notification: bool = False; include_external_images: bool = True
+
+
+class FeedbackRequest(BaseModel):
+    """User-submitted generation feedback, kept separate from presentation data."""
+    category: Literal["feedback", "error", "design", "other"] = "feedback"
+    message: str = Field(min_length=3, max_length=6000)
+    prompt: str | None = Field(default=None, max_length=16000)
+    error_details: str | None = Field(default=None, max_length=6000)
+    reply_to: str | None = Field(default=None, max_length=254)
+    screenshot_name: str | None = Field(default=None, max_length=255)
+    screenshot_mime_type: Literal["image/png", "image/jpeg"] | None = None
+    screenshot_base64: str | None = Field(default=None, max_length=4_200_000)

@@ -1,3 +1,5 @@
+import base64
+import html
 import os, time, uuid, httpx, streamlit as st
 from datetime import datetime, timezone
 import streamlit.components.v1 as components
@@ -5,6 +7,7 @@ from app.schemas.presentation import PresentationSpec
 from app.rendering.web_renderer import render_slide_html
 st.set_page_config(page_title="SlideWeaver",page_icon="▣",layout="wide")
 API=os.getenv("API_URL","http://localhost:8000")
+PUBLIC_API_URL=os.getenv("PUBLIC_API_URL", API).rstrip("/")
 PROJECT_GITHUB_URL="https://github.com/Akompalwad/ppt_builder"
 GITHUB_PROFILE_URL="https://github.com/Akompalwad"
 st.markdown("""
@@ -94,6 +97,33 @@ st.markdown("""
   .sidebar-console .name { margin-top: .25rem; color: #f4fbff; font-size: 1.28rem; font-weight: 750; letter-spacing: -.03em; }
   .sidebar-console .status { margin-top: .55rem; color: #abc3d8; font-size: .72rem; }
   .sidebar-console .dot { display:inline-block; width:.48rem; height:.48rem; margin-right:.42rem; border-radius:50%; background:#39f3c5; box-shadow:0 0 12px #39f3c5; }
+  .agent-pipeline {
+    margin: 1rem 0 .65rem;
+    padding: .85rem .15rem .7rem;
+    border-top: 1px solid rgba(118, 153, 188, .22);
+    border-bottom: 1px solid rgba(118, 153, 188, .15);
+  }
+  .agent-pipeline__header, .agent-pipeline__footer { display:flex; justify-content:space-between; gap:1rem; align-items:center; }
+  .agent-pipeline__eyebrow { color:#8ca3bc; font-size:.7rem; font-weight:750; letter-spacing:.11em; text-transform:uppercase; }
+  .agent-pipeline__summary { color:#dce9f5; font-size:.88rem; font-weight:650; }
+  .agent-pipeline__count { color:#8ca3bc; font-size:.76rem; white-space:nowrap; }
+  .agent-pipeline__rail { display:grid; grid-template-columns:repeat(var(--agent-count), minmax(0, 1fr)); margin: .9rem .15rem .8rem; }
+  .agent-pipeline__stage { position:relative; min-width:0; text-align:center; }
+  .agent-pipeline__stage:not(:last-child)::after { content:""; position:absolute; top:7px; left:50%; width:100%; height:1px; background:rgba(122, 145, 171, .32); }
+  .agent-pipeline__stage.done:not(:last-child)::after { background:#4ade80; }
+  .agent-pipeline__dot { position:relative; z-index:1; display:block; width:14px; height:14px; margin:0 auto .4rem; border-radius:50%; border:2px solid #61728a; background:#101b2b; }
+  .agent-pipeline__stage.done .agent-pipeline__dot { border-color:#4ade80; background:#4ade80; box-shadow:0 0 12px rgba(74,222,128,.5); }
+  .agent-pipeline__stage.active .agent-pipeline__dot { border-color:#f7b955; background:#f7b955; box-shadow:0 0 0 4px rgba(247,185,85,.13),0 0 14px rgba(247,185,85,.42); }
+  .agent-pipeline__stage.attention .agent-pipeline__dot { border-color:#ff6b6b; background:#ff6b6b; box-shadow:0 0 12px rgba(255,107,107,.48); }
+  .agent-pipeline__label { color:#8496ac; font-size:.69rem; font-weight:700; letter-spacing:.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .agent-pipeline__stage.done .agent-pipeline__label { color:#a8e9be; }
+  .agent-pipeline__stage.active .agent-pipeline__label { color:#ffe1a3; }
+  .agent-pipeline__stage.attention .agent-pipeline__label { color:#ffc0c0; }
+  .agent-pipeline__current { color:#a9bed1; font-size:.78rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .agent-pipeline__state { display:inline-flex; align-items:center; gap:.38rem; color:#9fb5c9; font-size:.72rem; white-space:nowrap; }
+  .agent-pipeline__state i { display:inline-block; width:.42rem; height:.42rem; border-radius:50%; background:#f7b955; box-shadow:0 0 8px rgba(247,185,85,.55); }
+  .agent-pipeline__state.complete i { background:#4ade80; box-shadow:0 0 8px rgba(74,222,128,.55); }
+  .agent-pipeline__state.failed i { background:#ff6b6b; box-shadow:0 0 8px rgba(255,107,107,.55); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -105,12 +135,83 @@ def about_slideweaver():
     st.link_button("Open developer profile", GITHUB_PROFILE_URL, use_container_width=True)
     st.link_button("Open project repository", PROJECT_GITHUB_URL, use_container_width=True)
 
+
+@st.dialog("Share feedback")
+def share_feedback():
+    st.caption("Help improve SlideWeaver by sharing the result, the prompt, and any error. Do not include API keys, passwords, or private data.")
+    with st.form("share_feedback_form", clear_on_submit=True):
+        category=st.selectbox("What are you reporting?", ["feedback", "error", "design", "other"], format_func=lambda value: value.replace("_", " ").title())
+        message=st.text_area("What happened?", placeholder="Describe what you expected and what happened instead.")
+        prompt=st.text_area("Prompt that led to this result (optional)", value=st.session_state.get("topic_input", ""))
+        error_details=st.text_area("Error message or technical details (optional)", placeholder="Paste the visible error text here.")
+        screenshot=st.file_uploader("Screenshot (optional, PNG or JPG, maximum 3 MB)", type=["png", "jpg", "jpeg"])
+        reply_to=st.text_input("Email for a reply (optional)", placeholder="you@example.com")
+        submitted=st.form_submit_button("Send feedback", type="primary", use_container_width=True)
+    if not submitted:
+        return
+    if not message.strip():
+        st.error("Please describe the feedback or issue.")
+        return
+    payload={
+        "category":category, "message":message.strip(), "prompt":prompt.strip() or None,
+        "error_details":error_details.strip() or None, "reply_to":reply_to.strip() or None,
+    }
+    if screenshot:
+        screenshot_bytes=screenshot.getvalue()
+        if len(screenshot_bytes) > 3 * 1024 * 1024:
+            st.error("Please choose a screenshot smaller than 3 MB.")
+            return
+        mime_type=screenshot.type if screenshot.type in {"image/png", "image/jpeg"} else "image/jpeg"
+        payload.update({
+            "screenshot_name":screenshot.name, "screenshot_mime_type":mime_type,
+            "screenshot_base64":base64.b64encode(screenshot_bytes).decode("ascii"),
+        })
+    try:
+        response=httpx.post(f"{API}/api/feedback", json=payload, headers=ACCESS_HEADERS, timeout=15)
+        response.raise_for_status()
+        st.success("Feedback received — thank you.")
+    except httpx.HTTPStatusError as exc:
+        detail=exc.response.text[:240] or f"HTTP {exc.response.status_code}"
+        st.error(f"Feedback could not be submitted: {detail}")
+    except httpx.HTTPError:
+        st.error("Could not reach the feedback service. Please try again shortly.")
+
 st.title("SlideWeaver")
 st.caption("Professional, editable presentations — generated asynchronously.")
-st.caption("Testing mode: presentation history is tied to this browser session until Google sign-in is enabled.")
+if auth_error:=st.query_params.get("auth_error"):
+    st.error(str(auth_error))
+    del st.query_params["auth_error"]
+if oauth_ticket:=st.query_params.get("oauth_ticket"):
+    try:
+        exchange=httpx.post(f"{API}/api/auth/session", params={"ticket":str(oauth_ticket)}, timeout=10)
+        exchange.raise_for_status()
+        st.session_state.access_session_id=exchange.json()["session_id"]
+        del st.query_params["oauth_ticket"]
+        st.rerun()
+    except (httpx.HTTPError, KeyError, ValueError):
+        st.error("Your Google sign-in could not be completed. Please try again.")
+        del st.query_params["oauth_ticket"]
 if "access_session_id" not in st.session_state:
     st.session_state.access_session_id=uuid.uuid4().hex
 ACCESS_HEADERS={"X-SlideWeaver-Session":st.session_state.access_session_id}
+try:
+    auth_response=httpx.get(f"{API}/api/auth/me", headers=ACCESS_HEADERS, timeout=5)
+    auth_response.raise_for_status()
+    auth_info=auth_response.json()
+except (httpx.HTTPError, ValueError):
+    st.error("Could not check sign-in status. Start the API and try again.")
+    st.stop()
+if auth_info.get("mode", "").lower() == "google":
+    if not auth_info.get("configured"):
+        st.error("Google sign-in is enabled but not configured on this server. Add the Google OAuth settings and restart the API.")
+        st.stop()
+    if not auth_info.get("authenticated"):
+        st.info("Sign in with Google to create and access your presentations.")
+        st.link_button("Continue with Google", f"{PUBLIC_API_URL}/api/auth/google/start", type="primary")
+        st.stop()
+    st.caption(f"Signed in as {auth_info.get('name') or auth_info.get('email')}")
+else:
+    st.caption("Testing mode: presentation history is tied to this browser session until Google sign-in is enabled.")
 
 def retention_countdown(expires_at: str | None) -> str:
     """Human-readable remaining retention time for the presentation library."""
@@ -133,6 +234,79 @@ def retention_countdown(expires_at: str | None) -> str:
     if hours:
         return f"T− {hours}h {minutes}m"
     return f"T− {minutes}m"
+
+
+def _pipeline_stage_index(current_stage: str, stages: list[tuple[str, tuple[str, ...]]]) -> int:
+    """Find the pipeline stage represented by a backend progress message."""
+    stage=current_stage.lower()
+    for index, (_, keywords) in enumerate(stages):
+        if any(keyword in stage for keyword in keywords):
+            return index
+    return -1
+
+
+def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
+    """Render a compact, accessible job pipeline from the API's live stage text."""
+    stages=(
+        [("Content", ("slide content", "rewriting", "composing")), ("Visuals", ("visual asset", "design director", "image")), ("QA", ("qa", "quality")), ("Export", ("renderer", "pptx", "updated"))]
+        if is_slide_edit else
+        [("Brief", ("brief", "classification", "interpreter")), ("Theme", ("theme",)), ("Content", ("slide content", "composing", "drafting")), ("Story", ("storyline",)), ("Visuals", ("design director", "visual asset", "image")), ("QA", ("qa", "quality")), ("Export", ("renderer", "pptx", "completed"))]
+    )
+    job_status=str(status.get("status", "QUEUED")).upper()
+    current_stage=str(status.get("current_stage") or "Waiting to start")
+    progress=int(status.get("progress") or 0)
+    active_index=_pipeline_stage_index(current_stage, stages)
+    if active_index < 0:
+        active_index=min(len(stages)-1, max(0, round(progress / 100 * (len(stages)-1))))
+    failed=job_status == "FAILED"
+    completed=job_status == "COMPLETED"
+    queued=job_status == "QUEUED"
+    stage_classes=[]
+    for index, _ in enumerate(stages):
+        if completed or (not queued and index < active_index):
+            stage_classes.append("done")
+        elif failed and index == active_index:
+            stage_classes.append("attention")
+        elif not queued and index == active_index:
+            stage_classes.append("active")
+        else:
+            stage_classes.append("waiting")
+    completed_count=len(stages) if completed else sum(state == "done" for state in stage_classes)
+    if completed:
+        summary="Presentation ready" if not is_slide_edit else "Slide update ready"
+        state_class="complete"
+        state_label="Complete"
+    elif failed:
+        summary="Generation needs attention" if not is_slide_edit else "Slide update needs attention"
+        state_class="failed"
+        state_label="Failed"
+    elif queued:
+        summary="Queued for generation" if not is_slide_edit else "Queued for slide update"
+        state_class=""
+        state_label="Waiting"
+    else:
+        summary="Generating presentation" if not is_slide_edit else "Updating slide"
+        state_class=""
+        state_label="In progress"
+    stages_html="".join(
+        f'<div class="agent-pipeline__stage {stage_classes[index]}"><span class="agent-pipeline__dot"></span><span class="agent-pipeline__label">{html.escape(label)}</span></div>'
+        for index, (label, _) in enumerate(stages)
+    )
+    queue=status.get("queue") or {}
+    queue_note=""
+    if queued:
+        ahead=int(queue.get("jobs_ahead", 0))
+        depth=int(queue.get("queue_depth", 0))
+        queue_note=f" · {ahead} ahead / depth {depth}"
+    detail=status.get("error_message") if failed else current_stage
+    st.markdown(
+        f'''<section class="agent-pipeline" style="--agent-count:{len(stages)}">
+          <div class="agent-pipeline__header"><div><div class="agent-pipeline__eyebrow">Agent pipeline</div><div class="agent-pipeline__summary">{html.escape(summary)}</div></div><div class="agent-pipeline__count">{completed_count}/{len(stages)} complete</div></div>
+          <div class="agent-pipeline__rail">{stages_html}</div>
+          <div class="agent-pipeline__footer"><div class="agent-pipeline__current">{html.escape(str(detail or "Waiting to start"))}</div><span class="agent-pipeline__state {state_class}"><i></i>{state_label}{queue_note}</span></div>
+        </section>''',
+        unsafe_allow_html=True,
+    )
 
 @st.dialog("My presentations")
 def presentation_library(history: list[dict]):
@@ -160,6 +334,15 @@ except httpx.HTTPError:
     st.stop()
 with st.sidebar:
     st.markdown("""<div class="sidebar-console"><div class="label">AI PRESENTATION STUDIO</div><div class="name">SLIDEWEAVER</div><div class="status"><span class="dot"></span>SYSTEM READY</div></div>""", unsafe_allow_html=True)
+    if auth_info.get("authenticated"):
+        st.caption(f"Signed in · {auth_info.get('email')}")
+        if st.button("Sign out", use_container_width=True):
+            try:
+                httpx.post(f"{API}/api/auth/logout", headers=ACCESS_HEADERS, timeout=5).raise_for_status()
+            except httpx.HTTPError:
+                pass
+            st.session_state.pop("access_session_id", None)
+            st.rerun()
     # Local Ollama remains an opt-in server-side contingency only. Users choose
     # between the two supported cloud agent sources.
     provider=st.selectbox("Provider",["Gemini","NVIDIA"])
@@ -195,6 +378,8 @@ with st.sidebar:
                 presentation_library(history)
         else:
             st.button("📚  My presentations", use_container_width=True, disabled=True)
+        if st.button("✦  Share feedback", use_container_width=True):
+            share_feedback()
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
             about_slideweaver()
         st.markdown(
@@ -206,7 +391,7 @@ with st.sidebar:
             <img src="https://github.githubassets.com/favicons/favicon.svg" alt="GitHub" width="18" height="18">Akompalwad</a>''',
             unsafe_allow_html=True,
         )
-topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy")
+topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy", key="topic_input")
 if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
     try:
         if provider in {"NVIDIA", "Gemini"}:
@@ -236,13 +421,7 @@ if job:=st.session_state.get("job"):
         else:
             opened=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS,timeout=5).json()
             status={"status":opened["status"],"progress":100 if opened["status"]=="COMPLETED" else 0,"current_stage":opened["status"]}
-        st.progress(status["progress"],text=status["current_stage"])
-        if status["status"] in {"QUEUED", "RUNNING"}:
-            st.caption(f"Active work: {status['current_stage']}")
-        if status["status"] == "QUEUED" and (queue:=status.get("queue")):
-            ahead=queue.get("jobs_ahead",0)
-            depth=queue.get("queue_depth",0)
-            st.info(f"Queued: {ahead} job{'s' if ahead != 1 else ''} ahead · queue depth {depth}")
+        render_agent_pipeline(status)
         if status["status"]=="COMPLETED":
             deck=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS).json(); st.success("Presentation ready")
             generation_metadata=deck["spec"].get("metadata",{})
@@ -284,12 +463,7 @@ if job:=st.session_state.get("job"):
                         st.session_state.pop(edit_job_key,None)
                         st.error(edit_job.get("error_message") or "The slide adjustment could not be applied.")
                     else:
-                        st.info(f"Editing slide {pending_edit['slide_number']}: {edit_job['current_stage']}")
-                        st.progress(edit_job["progress"], text=edit_job["current_stage"])
-                        if edit_job["status"] == "QUEUED" and (queue:=edit_job.get("queue")):
-                            ahead=queue.get("jobs_ahead",0)
-                            depth=queue.get("queue_depth",0)
-                            st.caption(f"Queued: {ahead} job{'s' if ahead != 1 else ''} ahead · queue depth {depth}")
+                        render_agent_pipeline(edit_job, is_slide_edit=True)
                         st.caption("The existing preview remains available until the updated version is ready.")
                         time.sleep(2)
                         st.rerun()

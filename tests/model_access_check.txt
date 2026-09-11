@@ -48,6 +48,7 @@ curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemma-4-26b-a4b
 
 
   # Deploy in provider
+ssh -i ssh-key-2026-09-08.key opc@80.225.249.18
 
 cd /home/opc/code/ppt_builder
 git fetch origin

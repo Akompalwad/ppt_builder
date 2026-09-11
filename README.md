@@ -91,6 +91,35 @@ changes only Python source files, the dependency-install command is harmless;
 it is included so the same release procedure also handles future dependency
 changes.
 
+### Google sign-in
+
+SlideWeaver supports Google OAuth using the server-side authorization-code
+flow. Create a **Web application** OAuth client in Google Cloud Console and
+configure these values only in the VM's `.env` file:
+
+```bash
+AUTH_MODE=google
+APP_PUBLIC_URL=https://slideweaver.duckdns.org
+PUBLIC_API_URL=https://slideweaver.duckdns.org
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+GOOGLE_REDIRECT_URI=https://slideweaver.duckdns.org/api/auth/google/callback
+```
+
+In Google Cloud Console, set the authorized JavaScript origin to
+`https://slideweaver.duckdns.org` and the authorized redirect URI to
+`https://slideweaver.duckdns.org/api/auth/google/callback`. Both HTTPS URL
+values must match exactly, including the path and any trailing slash rule.
+After saving `.env`, restart both services:
+
+```bash
+sudo systemctl restart slideweaver-api slideweaver-ui
+```
+
+OAuth-created sessions are tied to the verified Google account, so each person
+sees only their own presentation history. The testing browser-session mode
+remains available only while `AUTH_MODE=disabled`.
+
 With the **Auto** theme, SlideWeaver selects a topic-appropriate design system:
 security and SOC decks use *Security Signal*, investment/depository decks use
 *Investor Slate*, and AI/platform decks use *Aurora Tech*. The Storyline Agent

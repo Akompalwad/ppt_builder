@@ -7,6 +7,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     app_env: str = "development"
     auth_mode: str = "disabled"
+    app_public_url: str = "http://localhost:8501"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = ""
+    google_oauth_state_ttl_minutes: int = 10
     access_gate_enabled: bool = True
     access_max_active_users: int = 7
     access_session_ttl_minutes: int = 60
@@ -14,6 +19,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     storage_provider: str = "local"
     local_storage_path: Path = Path("storage/files")
+    feedback_storage_path: Path = Path("storage/feedback")
     llm_provider: str = "gemini"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_api_key: str = ""
