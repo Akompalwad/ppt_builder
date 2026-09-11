@@ -128,7 +128,8 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
         decisions=[]; previous_composition: str | None=None
         for index, slide in enumerate(spec.slides):
             title=(slide.title+" "+slide.purpose).lower()
-            if slide.metadata.get("brief_layout_locked"):
+            constraint_layout=slide.visual_spec.get("constraint_layout")
+            if slide.metadata.get("brief_layout_locked") or constraint_layout:
                 recipe=self._recipe_for_explicit_layout(slide.layout_type)
             elif index==0:
                 recipe=RECIPES["cover"]
@@ -143,17 +144,17 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
                     recipe=self._recipe_for(title)
 
             choice=choices.get(slide.slide_number)
-            if choice and index not in {0, len(spec.slides)-1}:
+            if choice and index not in {0, len(spec.slides)-1} and not constraint_layout:
                 recipe=RECIPES[choice.recipe]
 
             # A sequence of generic grids is the usual cause of a template-like
             # deck. Switch the later duplicate into an asymmetric editorial slide.
-            if not slide.metadata.get("brief_layout_locked") and recipe.composition==previous_composition and recipe.name in {"grid", "insight"}:
+            if not (slide.metadata.get("brief_layout_locked") or constraint_layout) and recipe.composition==previous_composition and recipe.name in {"grid", "insight"}:
                 recipe=RECIPES["insight"] if recipe.name=="grid" else RECIPES["grid"]
 
             # Explicit layout requests in a detailed user brief are a contract,
             # not a suggestion for the visual agent to overwrite.
-            resolved_layout=slide.layout_type if slide.metadata.get("brief_layout_locked") else recipe.layout
+            resolved_layout=slide.layout_type if (slide.metadata.get("brief_layout_locked") or constraint_layout) else recipe.layout
             slide.layout_type=resolved_layout
             selected_variant=choice.visual_variant if choice else self._default_variant(recipe)
             # A chart is chosen from supplied data, never from model-invented

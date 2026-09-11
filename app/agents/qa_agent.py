@@ -9,6 +9,25 @@ _PLANNING_COPY = (
     "land on a memorable recommendation", "explain the importance of choosing",
 )
 _TRAILING_CONNECTORS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "vs", "with"}
+_PLANNING_OPENERS = re.compile(r"^(?:to\s+)?(?:provide|explain|describe|outline|present|summarize|illustrate|demonstrate|guide|help)\b", re.I)
+_TOPIC_NOISE = {"about", "create", "deck", "educational", "future", "history", "include", "presentation", "slides", "spanning", "topic"}
+
+def topic_matches_deck(spec: PresentationSpec, requested_topic: str) -> bool:
+    """Reject provider drift before an unrelated deck reaches the renderer."""
+    terms={word.lower() for word in re.findall(r"[A-Za-z][A-Za-z0-9-]+", requested_topic) if len(word) >= 4}
+    terms-=_TOPIC_NOISE
+    if not terms:
+        return True
+    visible=" ".join(
+        [spec.title, spec.subtitle or ""] + [
+            " ".join([slide.title, slide.subtitle or "", slide.purpose] + [
+                " ".join(filter(None, (element.heading, element.label, element.body, element.subtext, element.value)))
+                for element in slide.elements
+            ])
+            for slide in spec.slides
+        ]
+    ).lower()
+    return any(re.search(rf"\b{re.escape(term)}\b", visible) for term in terms)
 
 
 def comparison_cover_title(topic: str) -> str | None:
@@ -62,8 +81,16 @@ def summarize_point(value: str, max_words: int) -> str:
     return " ".join(words).rstrip(". ")+"." if words else ""
 
 def _is_unusable_lead(value: str) -> bool:
-    text=(value or "").strip().lower()
+    raw=(value or "").strip()
+    text=raw.lower()
     if not text or any(phrase in text for phrase in _PLANNING_COPY):
+        return True
+    # Purposes are audience-facing sentences, not agent directives such as
+    # "To provide clear contact information...".  They commonly become
+    # visibly clipped when a provider stops mid-instruction.
+    if _PLANNING_OPENERS.match(raw):
+        return True
+    if len(raw.split()) > 5 and not re.search(r"[.!?][\"')\]]?$", raw):
         return True
     last=text.rstrip(".?! ").split(" ")[-1] if text else ""
     return last in _TRAILING_CONNECTORS
@@ -103,13 +130,14 @@ class PresentationQAAgent:
                 purpose_budget=13
             else:
                 purpose_budget=18
-            slide.purpose=summarize_point(slide.purpose, purpose_budget)
-            if _is_unusable_lead(slide.purpose):
+            raw_purpose=slide.purpose
+            slide.purpose=summarize_point(raw_purpose, purpose_budget)
+            if _is_unusable_lead(raw_purpose) or _is_unusable_lead(slide.purpose):
                 replacement=_fact_based_lead(slide)
                 if replacement:
                     slide.purpose=replacement
                     issues.append(f"Slide {slide.slide_number}: replaced internal planning copy with a slide fact")
-            locked=bool(slide.metadata.get("brief_layout_locked"))
+            locked=bool(slide.metadata.get("brief_layout_locked") or slide.metadata.get("content_contract_locked"))
             if not locked and slide.layout_type in {LayoutType.step_workflow,LayoutType.process_flow,LayoutType.timeline} and len(slide.elements)>3:
                 slide.layout_type=LayoutType.feature_grid; issues.append(f"Slide {slide.slide_number}: converted dense flow to a readable grid")
             budget=16 if slide.layout_type in {LayoutType.feature_grid,LayoutType.comparison,LayoutType.two_column} else 13
@@ -119,7 +147,12 @@ class PresentationQAAgent:
             for element in slide.elements:
                 if element.heading: element.heading=summarize_point(element.heading,6)
                 if element.label: element.label=summarize_point(element.label,6)
-                if element.body: element.body=summarize_point(element.body,budget)
+                if element.body:
+                    raw_body=element.body
+                    element.body=summarize_point(raw_body,budget)
+                    if _is_unusable_lead(raw_body):
+                        element.body=summarize_point(element.subtext or element.value or "",budget)
+                        issues.append(f"Slide {slide.slide_number}: removed incomplete element copy")
                 if element.subtext: element.subtext=summarize_point(element.subtext,budget)
         spec.title=summarize_point(spec.title,8)
         return {"passed":True,"score":100 if not issues else 92,"issues":issues,"policy":"Complete decision-relevant sentences replace clipped copy."}

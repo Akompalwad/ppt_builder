@@ -7,12 +7,24 @@ from app.agents.brief_agent import BriefInterpreterAgent
 from app.agents.slide_content_agent import SlideContentAgent
 from app.rendering.pptx_builder import build_presentation
 from app.rendering.web_renderer import render_slide_html
-from app.agents.qa_agent import PresentationQAAgent, summarize_point
+from app.agents.qa_agent import PresentationQAAgent, summarize_point, topic_matches_deck
 from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
 from app.agents.design_agent import DesignDirectorAgent
 from app.services.image_service import ImageService
+from app.services.generation_queue import GenerationQueue
 from app.config import Settings
 from pptx import Presentation
+
+def test_generation_queue_snapshot_reports_waiting_depth():
+    queue=GenerationQueue(max_active_jobs=1)
+    with queue._condition:
+        queue._active=1
+        queue._pending.extend(["first:ticket", "second:ticket"])
+    snapshot=queue.snapshot("second")
+    assert snapshot["queue_depth"] == 3
+    assert snapshot["jobs_ahead"] == 2
+    assert snapshot["position"] == 2
+
 def test_fallback_and_pptx(tmp_path):
     spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic="AI adoption",slide_count=4))
     assert len(spec.slides)==4
@@ -68,6 +80,37 @@ def test_qa_replaces_private_story_instruction_with_slide_fact():
     )
     PresentationQAAgent().validate_and_recompose(spec)
     assert spec.slides[0].purpose == "A digital vault that holds shares and bonds."
+
+def test_qa_replaces_incomplete_or_planning_purpose_with_visible_fact():
+    spec=PresentationSpec(
+        title="Green logistics", topic="Green logistics",
+        slides=[SlideSpec(
+            slide_number=1, title="Delivery cost pressure", layout_type=LayoutType.summary,
+            purpose="To provide clear contact information and a direct",
+            elements=[{"heading":"Fuel use", "body":"Route optimization cuts fuel waste and delivery emissions."}],
+        )],
+    )
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert spec.slides[0].purpose == "Route optimization cuts fuel waste and delivery emissions."
+
+def test_topic_guard_rejects_unrelated_provider_deck():
+    spec=PresentationSpec(
+        title="EcoRoute", topic="The History and Future of Quantum Computing",
+        slides=[SlideSpec(slide_number=1, title="Green Logistics", purpose="Optimize delivery routes.", layout_type=LayoutType.title_slide)],
+    )
+    assert not topic_matches_deck(spec, "The History and Future of Quantum Computing")
+
+def test_prose_constraints_preserve_timeline_concepts_and_final_count():
+    prompt=("Create an educational presentation about quantum computing spanning exactly 7 slides. "
+            "The content needs to move from a historical timeline (1980s to present), explain 3 complex concepts "
+            "(superposition, entanglement, qubits) using nested subheadings, and finish with a slide detailing 4 distinct future industries it will disrupt.")
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=6)
+    assert brief.is_structured and brief.requested_slide_count == 7
+    assert brief.constraint_for_slide(2).layout_type == LayoutType.timeline
+    concepts=brief.constraint_for_slide(4)
+    assert concepts.requirements == ["superposition", "entanglement", "qubits"]
+    final=brief.constraint_for_slide(7)
+    assert final.layout_type == LayoutType.feature_grid and final.exact_element_count == 4
 
 def test_portable_gradient_background_and_long_metric_copy(tmp_path):
     spec=PresentationSpec(

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from app.schemas.presentation import CreatePresentationRequest, DesignSystem, LayoutType, PresentationSpec, SlideElement, SlideSpec
 from app.llm.gateway import LLMGateway
-from app.agents.qa_agent import PresentationQAAgent, summarize_point
+from app.agents.qa_agent import PresentationQAAgent, summarize_point, topic_matches_deck
 from app.agents.design_agent import DesignDirectorAgent
 from app.agents.storyline_agent import StorylineAgent
 from app.agents.slide_content_agent import SlideContentAgent
@@ -72,7 +72,7 @@ class PresentationOrchestrator:
         # slider.  It is especially important when the slider still says six
         # but the prompt explicitly defines "Slide 1" through "Slide 5".
         if brief.is_structured:
-            requested_brief_count=max(slide.slide_number for slide in brief.slides)
+            requested_brief_count=brief.requested_slide_count or max(slide.slide_number for slide in brief.slides)
             request=request.model_copy(update={"slide_count":requested_brief_count})
         selected_provider=(request.provider or "").lower()
         if selected_provider in {"nvidia", "gemini", "ollama"}:
@@ -98,6 +98,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                     generated=normalize_slide_copy(LLMGateway.from_settings(selected_provider,request.model).generate_json(prompt,max_tokens=token_budget))
                     generated["design_system"]=resolved_theme.model_dump()
                     spec=PresentationSpec.model_validate(generated)
+                if not topic_matches_deck(spec, topic):
+                    raise ValueError("Provider returned a deck unrelated to the requested topic")
                 stage("Storyline Agent — assigning narrative roles", 70)
                 storyline_plan=StorylineAgent().apply(spec)
                 # The design pass owns only composition and visual direction;
@@ -146,6 +148,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             progress=stage,
                         )
                         spec.design_system=resolved_theme
+                        if not topic_matches_deck(spec, topic):
+                            raise ValueError("Local provider returned a deck unrelated to the requested topic")
                         stage("Storyline Agent — assigning narrative roles",70)
                         storyline_plan=StorylineAgent().apply(spec)
                         stage("Design Director Agent — selecting layouts and visuals",78)

@@ -16,6 +16,23 @@ class GenerationQueue:
         self._active=0
         self._condition=threading.Condition()
 
+    def snapshot(self, job_id: str | None = None) -> dict[str, int | None]:
+        """Return a lock-consistent view for the user-facing queue indicator."""
+        with self._condition:
+            pending=[ticket.split(":",1)[0] for ticket in self._pending]
+            pending_position=(pending.index(job_id)+1) if job_id in pending else None
+            # An active job occupies a worker slot before queued tickets can
+            # start, so it is included in the count of jobs ahead.
+            jobs_ahead=(self._active + (pending_position-1)) if pending_position else 0
+            return {
+                "queue_depth": self._active+len(pending),
+                "waiting_jobs": len(pending),
+                "active_jobs": self._active,
+                "max_active_jobs": self.max_active_jobs,
+                "position": pending_position,
+                "jobs_ahead": jobs_ahead,
+            }
+
     @contextmanager
     def slot(self, job_id: str):
         ticket=f"{job_id}:{uuid.uuid4().hex}"

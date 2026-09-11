@@ -54,17 +54,29 @@ class BriefSlide(BaseModel):
             metadata={"brief_layout_locked": True},
         )
 
+class SlideConstraint(BaseModel):
+    """A partial contract from prose that does not name every slide."""
+    slide_number: int
+    layout_type: LayoutType | None = None
+    requirements: list[str] = Field(default_factory=list)
+    exact_element_count: int | None = None
+
 
 class PresentationBrief(BaseModel):
     slides: list[BriefSlide] = Field(default_factory=list)
+    constraints: list[SlideConstraint] = Field(default_factory=list)
     deck_title: str | None = None
+    requested_slide_count: int | None = None
 
     @property
     def is_structured(self) -> bool:
-        return bool(self.slides)
+        return bool(self.slides or self.constraints)
 
     def by_number(self, number: int) -> BriefSlide | None:
         return next((slide for slide in self.slides if slide.slide_number == number), None)
+
+    def constraint_for_slide(self, number: int) -> SlideConstraint | None:
+        return next((constraint for constraint in self.constraints if constraint.slide_number == number), None)
 
 
 class PromptClassification(BaseModel):
@@ -101,6 +113,14 @@ class BriefInterpreterAgent:
                 mode="structured",
                 reason="Detected numbered slide contracts with explicit title, layout, or content requirements.",
                 detected_slide_numbers=numbers,
+            )
+        constraint_count=re.search(r"\b(?:exactly|spanning)\s+(\d+)\s+slides?\b", normalized, re.I)
+        has_narrative_constraints=bool(re.search(r"\b(?:timeline|finish\s+with|concepts?\s*\(|must\s+include)\b", normalized, re.I))
+        if constraint_count and has_narrative_constraints:
+            return PromptClassification(
+                mode="structured",
+                reason="Detected an exact slide count with narrative and content constraints.",
+                detected_slide_numbers=list(range(1, int(constraint_count.group(1))+1)),
             )
         return PromptClassification(
             mode="open_ended",
@@ -196,4 +216,37 @@ class BriefInterpreterAgent:
             for marker in ("Topic Areas", "Steps to cover", "Tiers to cover", "Key Outcomes"):
                 requirements.extend(self._lines_after(section, marker))
             slides.append(BriefSlide(slide_number=number, title=title, subtitle=subtitle_values[0] if subtitle_values else None, layout_type=layout, requirements=requirements))
-        return PresentationBrief(slides=slides)
+        if slides:
+            return PresentationBrief(slides=slides)
+
+        # Some strong briefs describe a sequence in prose rather than naming
+        # every "Slide N". Convert only the hard placement/content constraints
+        # into a partial contract and leave the remaining story to the model.
+        count_match=re.search(r"\b(?:exactly|spanning)\s+(\d+)\s+slides?\b", normalized, re.I)
+        if not count_match:
+            return PresentationBrief()
+        count=int(count_match.group(1))
+        if not 3 <= count <= 10:
+            return PresentationBrief()
+        constraints=[]
+        timeline=re.search(r"(?:timeline|historical timeline)\s*\(([^)]+)\)", normalized, re.I)
+        if timeline:
+            constraints.append(SlideConstraint(
+                slide_number=2, layout_type=LayoutType.timeline,
+                requirements=[f"Historical timeline covering {timeline.group(1).strip()}"],
+            ))
+        concepts=re.search(r"(\d+)\s+(?:complex\s+)?concepts?\s*\(([^)]+)\)", normalized, re.I)
+        if concepts:
+            names=[name.strip() for name in concepts.group(2).split(",") if name.strip()]
+            if names:
+                constraints.append(SlideConstraint(
+                    slide_number=max(3,count-3), layout_type=LayoutType.feature_grid,
+                    requirements=names, exact_element_count=min(int(concepts.group(1)),len(names)),
+                ))
+        future=re.search(r"finish\s+with\s+(?:a\s+slide\s+)?(?:detailing|showing)\s+(\d+)\s+distinct\s+([^.!\n]+)", normalized, re.I)
+        if future:
+            constraints.append(SlideConstraint(
+                slide_number=count, layout_type=LayoutType.feature_grid,
+                requirements=[future.group(2).strip()], exact_element_count=int(future.group(1)),
+            ))
+        return PresentationBrief(constraints=constraints, requested_slide_count=count) if constraints else PresentationBrief()

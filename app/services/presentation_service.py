@@ -79,7 +79,30 @@ class PresentationService:
     def job(self,job_id:str,session_id: str):
         with SessionLocal() as db:
             j=db.get(GenerationJob,job_id); user=self._user(db,session_id); presentation=db.get(Presentation,j.presentation_id) if j else None
-            return None if not j or not presentation or presentation.user_id != user.id else {"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message}
+            if not j or not presentation or presentation.user_id != user.id:
+                return None
+            result={"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message}
+            if j.status in {"QUEUED","RUNNING"}:
+                queue=shared_generation_queue(get_settings().generation_max_concurrent_jobs)
+                # The database covers the brief interval after the API accepts
+                # a job but before FastAPI starts its background task, while
+                # the queue still supplies the configured concurrency detail.
+                active_jobs=db.scalars(
+                    select(GenerationJob)
+                    .where(GenerationJob.status.in_(("QUEUED","RUNNING")))
+                    .order_by(GenerationJob.created_at,GenerationJob.id)
+                ).all()
+                position=next((index for index, queued in enumerate(active_jobs, start=1) if queued.id==j.id),None)
+                queue_state=queue.snapshot(j.id)
+                queue_state.update({
+                    "queue_depth":len(active_jobs),
+                    "waiting_jobs":sum(queued.status=="QUEUED" for queued in active_jobs),
+                    "active_jobs":sum(queued.status=="RUNNING" for queued in active_jobs),
+                    "position":position,
+                    "jobs_ahead":max(0,(position or 1)-1),
+                })
+                result["queue"]=queue_state
+            return result
     def create_slide_edit(self,presentation_id:str,slide_number:int,instruction:str,session_id:str) -> str:
         """Queue an isolated edit without making the existing deck unavailable."""
         with SessionLocal() as db:

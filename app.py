@@ -239,6 +239,10 @@ if job:=st.session_state.get("job"):
         st.progress(status["progress"],text=status["current_stage"])
         if status["status"] in {"QUEUED", "RUNNING"}:
             st.caption(f"Active work: {status['current_stage']}")
+        if status["status"] == "QUEUED" and (queue:=status.get("queue")):
+            ahead=queue.get("jobs_ahead",0)
+            depth=queue.get("queue_depth",0)
+            st.info(f"Queued: {ahead} job{'s' if ahead != 1 else ''} ahead · queue depth {depth}")
         if status["status"]=="COMPLETED":
             deck=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS).json(); st.success("Presentation ready")
             generation_metadata=deck["spec"].get("metadata",{})
@@ -282,6 +286,10 @@ if job:=st.session_state.get("job"):
                     else:
                         st.info(f"Editing slide {pending_edit['slide_number']}: {edit_job['current_stage']}")
                         st.progress(edit_job["progress"], text=edit_job["current_stage"])
+                        if edit_job["status"] == "QUEUED" and (queue:=edit_job.get("queue")):
+                            ahead=queue.get("jobs_ahead",0)
+                            depth=queue.get("queue_depth",0)
+                            st.caption(f"Queued: {ahead} job{'s' if ahead != 1 else ''} ahead · queue depth {depth}")
                         st.caption("The existing preview remains available until the updated version is ready.")
                         time.sleep(2)
                         st.rerun()

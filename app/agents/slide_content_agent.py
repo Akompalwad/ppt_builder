@@ -31,6 +31,22 @@ class SlideContentAgent:
         return preserved
 
     @staticmethod
+    def _preserve_named_requirements(requirements: list[str], generated: dict) -> list[dict]:
+        """Keep named concepts from a prose constraint even if the model drifts."""
+        returned={
+            (item.get("heading") or item.get("label") or "").strip().lower(): item
+            for item in generated.get("elements", []) if isinstance(item, dict)
+        }
+        preserved=[]
+        for requirement in requirements:
+            candidate=returned.get(requirement.lower(), {})
+            preserved.append({
+                "type":candidate.get("type", "card"), "heading":requirement,
+                "body":candidate.get("body") or candidate.get("subtext") or f"Explain {requirement} in clear, complete terms.",
+            })
+        return preserved
+
+    @staticmethod
     def _complete_slide_payload(slide: SlideSpec, directive, generated: object) -> dict:
         """Repair partial provider output before strict SlideSpec validation.
 
@@ -90,7 +106,16 @@ class SlideContentAgent:
         placeholders=[]
         for number in range(1, request.slide_count + 1):
             directive=brief.by_number(number) if brief else None
-            placeholders.append(directive.seed() if directive else SlideSpec(slide_number=number, title=request.topic, purpose="Develop this story beat.", layout_type=LayoutType.feature_grid))
+            constraint=brief.constraint_for_slide(number) if brief else None
+            if directive:
+                placeholders.append(directive.seed())
+            else:
+                placeholders.append(SlideSpec(
+                    slide_number=number, title=request.topic, purpose="Develop this story beat.",
+                    layout_type=constraint.layout_type if constraint and constraint.layout_type else LayoutType.feature_grid,
+                    visual_spec={"constraint_requirements":constraint.requirements, "constraint_layout":constraint.layout_type.value if constraint and constraint.layout_type else None} if constraint else {},
+                    metadata={"content_contract_locked":bool(constraint)},
+                ))
         spec=PresentationSpec(
             title=request.topic, topic=request.topic, target_audience=request.audience,
             language=request.language, theme=theme_name, slides=placeholders,
@@ -109,6 +134,7 @@ class SlideContentAgent:
                     25 + int((slide.slide_number - 1) / max(1, request.slide_count) * 42),
                 )
             directive=brief.by_number(slide.slide_number) if brief else None
+            constraint=brief.constraint_for_slide(slide.slide_number) if brief else None
             locked_contract=(f'''This is an explicit user-authored contract. Preserve its exact title, subtitle, layout, and every required item. Expand each item with accurate, concise technical explanation; do not omit, rename, or replace it.
 Required title: {directive.title}
 Required subtitle: {directive.subtitle or "none"}
@@ -116,6 +142,12 @@ Required layout: {directive.layout_type.value}
 Required items: {directive.requirements}
 Chart data supplied by the user: {directive.chart_data or "none"}
 ''' if directive else "")
+            prose_contract=(f'''This is a non-negotiable prose constraint for this slide. Meet it without exposing this instruction in visible text.
+Required layout: {constraint.layout_type.value if constraint and constraint.layout_type else "model choice"}
+Required content: {constraint.requirements if constraint else "none"}
+Required element count: {constraint.exact_element_count if constraint and constraint.exact_element_count else "normal"}
+''' if constraint else "")
+            element_count_rule=(f"Use exactly {constraint.exact_element_count} elements for this slide." if constraint and constraint.exact_element_count else "Use zero or one element for the title slide, and 2–3 elements for other slides (four only for a true comparison).")
             prompt=f'''Create exactly one PowerPoint slide as one JSON object.
 Topic: {request.topic}
 Audience: {request.audience}
@@ -127,16 +159,19 @@ Story role: {beat.stage}
 Story intent: {beat.intent}
 Preferred composition: {beat.preferred_recipe}
 {locked_contract}
+{prose_contract}
 Visual asset rule: {"Set image_required to true for this cover and provide a precise Unsplash stock_query." if slide.slide_number == 1 else "Set image_required to true only when a real photograph materially improves this slide; otherwise use false."}
 
 Return one valid JSON object only. It must include title, subtitle, layout_type, purpose, elements, and visual_spec. Each element must include type, heading, and body. visual_spec must include icon_concept, image_required, image_prompt, and stock_query.
 
 Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architecture_layers, comparison, timeline, process_flow, dashboard, two_column, key_metrics, summary, content_with_visual.
-Use zero or one element for the title slide, and 2–3 elements for other slides (four only for comparisons). Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context".'''
+{element_count_rule} Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context".'''
             max_tokens=get_settings().gemini_max_output_tokens if provider == "gemini" else 1200
             generated=gateway.generate_json(prompt, max_tokens=max_tokens, temperature=.1)
             if directive and (directive.elements or directive.requirements) and isinstance(generated, dict):
                 generated["elements"]=self._preserve_contract_elements(directive, generated)
+            elif constraint and constraint.requirements and constraint.exact_element_count == len(constraint.requirements) and isinstance(generated, dict):
+                generated["elements"]=self._preserve_named_requirements(constraint.requirements, generated)
             # The Storyline and Design agents own layout selection. Models
             # occasionally echo the JSON-schema placeholder ("...") for this
             # field, which should never invalidate otherwise usable content.
