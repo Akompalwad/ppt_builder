@@ -104,6 +104,7 @@ PUBLIC_API_URL=https://slideweaver.duckdns.org
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
 GOOGLE_REDIRECT_URI=https://slideweaver.duckdns.org/api/auth/google/callback
+ADMIN_EMAILS=your-google-account@example.com
 ```
 
 In Google Cloud Console, set the authorized JavaScript origin to
@@ -119,6 +120,11 @@ sudo systemctl restart slideweaver-api slideweaver-ui
 OAuth-created sessions are tied to the verified Google account, so each person
 sees only their own presentation history. The testing browser-session mode
 remains available only while `AUTH_MODE=disabled`.
+
+`ADMIN_EMAILS` is a comma-separated allowlist of verified Google email
+addresses. Those accounts receive an **Admin activity** button in the sidebar
+with active-user count, recent activity, presentation count, and job status;
+it never exposes presentation content or prompts.
 
 With the **Auto** theme, SlideWeaver selects a topic-appropriate design system:
 security and SOC decks use *Security Signal*, investment/depository decks use

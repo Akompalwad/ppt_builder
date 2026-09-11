@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_redirect_uri: str = ""
     google_oauth_state_ttl_minutes: int = 10
+    # Comma-separated verified Google emails that may open the admin console.
+    admin_emails: str = ""
     access_gate_enabled: bool = True
     access_max_active_users: int = 7
     access_session_ttl_minutes: int = 60

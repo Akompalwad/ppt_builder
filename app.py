@@ -124,6 +124,17 @@ st.markdown("""
   .agent-pipeline__state i { display:inline-block; width:.42rem; height:.42rem; border-radius:50%; background:#f7b955; box-shadow:0 0 8px rgba(247,185,85,.55); }
   .agent-pipeline__state.complete i { background:#4ade80; box-shadow:0 0 8px rgba(74,222,128,.55); }
   .agent-pipeline__state.failed i { background:#ff6b6b; box-shadow:0 0 8px rgba(255,107,107,.55); }
+  .signin-shell { min-height:72vh; display:flex; align-items:center; justify-content:center; padding:2rem 1rem 4rem; }
+  .signin-card { width:min(100%, 480px); padding:2.7rem 2.55rem 2.25rem; border:1px solid rgba(122, 238, 219, .25); border-radius:1.25rem; text-align:center; background:linear-gradient(145deg, rgba(15, 36, 57, .91), rgba(12, 18, 48, .91)); box-shadow:0 28px 80px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.08); }
+  .signin-mark { width:3.3rem; height:3.3rem; margin:0 auto 1.35rem; display:grid; place-items:center; border-radius:1rem; color:#06111c; font-size:1.35rem; font-weight:900; background:linear-gradient(135deg, #4bf0cd, #6a82ff); box-shadow:0 0 0 6px rgba(73,235,210,.08), 0 10px 30px rgba(51,209,199,.26); }
+  .signin-eyebrow { color:#62efd1; font-size:.7rem; font-weight:800; letter-spacing:.16em; text-transform:uppercase; }
+  .signin-card h1 { margin:.55rem 0 .7rem; color:#f4fbff; font-size:2rem; letter-spacing:-.045em; }
+  .signin-card p { margin:0 auto; max-width:350px; color:#b4c6d9; font-size:.98rem; line-height:1.55; }
+  .signin-google { display:flex; align-items:center; justify-content:center; gap:.75rem; margin:1.8rem 0 1.2rem; padding:.82rem 1rem; border:1px solid rgba(224,235,248,.52); border-radius:.72rem; color:#eef6ff !important; text-decoration:none !important; font-weight:700; background:rgba(255,255,255,.08); box-shadow:inset 0 1px 0 rgba(255,255,255,.09), 0 10px 22px rgba(0,0,0,.18); transition:transform .16s ease, background .16s ease, border-color .16s ease; }
+  .signin-google:hover { transform:translateY(-1px); background:rgba(255,255,255,.14); border-color:#fff; }
+  .signin-google svg { width:20px; height:20px; flex:0 0 auto; }
+  .signin-footnote { color:#829ab1 !important; font-size:.76rem !important; }
+  @media (max-width: 640px) { .signin-shell { min-height:66vh; padding:1rem 0 3rem; } .signin-card { padding:2.25rem 1.45rem 1.85rem; border-radius:1rem; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -176,8 +187,43 @@ def share_feedback():
     except httpx.HTTPError:
         st.error("Could not reach the feedback service. Please try again shortly.")
 
-st.title("SlideWeaver")
-st.caption("Professional, editable presentations — generated asynchronously.")
+
+@st.dialog("Admin activity")
+def admin_activity():
+    st.caption("Live sessions and operational activity. Presentation content and prompts are never shown here.")
+    try:
+        response=httpx.get(f"{API}/api/admin/activity", headers=ACCESS_HEADERS, timeout=8)
+        response.raise_for_status()
+        snapshot=response.json()
+    except httpx.HTTPStatusError as exc:
+        st.error("This account is not authorized to view admin activity." if exc.response.status_code == 403 else "Admin activity is temporarily unavailable.")
+        return
+    except (httpx.HTTPError, ValueError):
+        st.error("Admin activity is temporarily unavailable.")
+        return
+    left, middle, right=st.columns(3)
+    left.metric("Active users", snapshot.get("active_users", 0))
+    middle.metric("Testing limit", snapshot.get("max_active_users", 0))
+    right.metric("Session window", f"{snapshot.get('session_ttl_minutes', 0)} min")
+    if st.button("↻  Refresh activity", use_container_width=True):
+        st.rerun()
+    users=snapshot.get("users", [])
+    if not users:
+        st.info("No active Google sessions right now.")
+        return
+    for user in users:
+        with st.container(border=True):
+            identity, activity=st.columns([1.1, 1])
+            identity.markdown(f"**{user.get('name') or 'Unknown user'}**")
+            identity.caption(user.get("email") or "")
+            activity.markdown(f"**{user.get('presentations', 0)}** presentations")
+            activity.caption(f"Last seen: {relative_time(user.get('last_seen_at'))}")
+            if latest:=user.get("latest_presentation"):
+                st.caption(f"Latest deck: {latest}")
+            if stage:=user.get("current_stage"):
+                status=(user.get("job_status") or "unknown").title()
+                st.caption(f"Latest job · {status}: {stage}")
+
 if auth_error:=st.query_params.get("auth_error"):
     st.error(str(auth_error))
     del st.query_params["auth_error"]
@@ -206,11 +252,21 @@ if auth_info.get("mode", "").lower() == "google":
         st.error("Google sign-in is enabled but not configured on this server. Add the Google OAuth settings and restart the API.")
         st.stop()
     if not auth_info.get("authenticated"):
-        st.info("Sign in with Google to create and access your presentations.")
-        st.link_button("Continue with Google", f"{PUBLIC_API_URL}/api/auth/google/start", type="primary")
+        sign_in_url=html.escape(f"{PUBLIC_API_URL}/api/auth/google/start", quote=True)
+        st.markdown(f'''<main class="signin-shell"><section class="signin-card" aria-label="Sign in to SlideWeaver">
+          <div class="signin-mark">S</div><div class="signin-eyebrow">AI presentation studio</div>
+          <h1>Welcome to SlideWeaver</h1>
+          <p>Create editable, polished presentations and return to every deck from your own workspace.</p>
+          <a class="signin-google" href="{sign_in_url}"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.22c0-.71-.06-1.39-.18-2.04H12v3.86h5.24a4.48 4.48 0 0 1-1.94 2.94v2.5h3.14c1.84-1.7 2.91-4.2 2.91-7.26Z"/><path fill="#34A853" d="M12 21.73c2.62 0 4.82-.87 6.38-2.35l-3.14-2.5c-.87.58-1.99.92-3.24.92-2.49 0-4.6-1.68-5.36-3.94H3.4v2.58A9.63 9.63 0 0 0 12 21.73Z"/><path fill="#FBBC05" d="M6.64 13.86A5.8 5.8 0 0 1 6.34 12c0-.64.11-1.26.3-1.86V7.56H3.4A9.7 9.7 0 0 0 2.37 12c0 1.56.37 3.04 1.03 4.44l3.24-2.58Z"/><path fill="#EA4335" d="M12 6.2c1.43 0 2.7.49 3.7 1.45l2.78-2.78C16.82 3.31 14.62 2.27 12 2.27A9.63 9.63 0 0 0 3.4 7.56l3.24 2.58C7.4 7.88 9.51 6.2 12 6.2Z"/></svg>Continue with Google</a>
+          <p class="signin-footnote">We use your verified Google identity only to secure your workspace and presentation history.</p>
+        </section></main>''', unsafe_allow_html=True)
         st.stop()
+    st.title("SlideWeaver")
+    st.caption("Professional, editable presentations — generated asynchronously.")
     st.caption(f"Signed in as {auth_info.get('name') or auth_info.get('email')}")
 else:
+    st.title("SlideWeaver")
+    st.caption("Professional, editable presentations — generated asynchronously.")
     st.caption("Testing mode: presentation history is tied to this browser session until Google sign-in is enabled.")
 
 def retention_countdown(expires_at: str | None) -> str:
@@ -234,6 +290,27 @@ def retention_countdown(expires_at: str | None) -> str:
     if hours:
         return f"T− {hours}h {minutes}m"
     return f"T− {minutes}m"
+
+
+def relative_time(timestamp: str | None) -> str:
+    if not timestamp:
+        return "unknown"
+    try:
+        moment=datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if moment.tzinfo is None:
+            moment=moment.replace(tzinfo=timezone.utc)
+        seconds=max(0, int((datetime.now(timezone.utc)-moment).total_seconds()))
+    except ValueError:
+        return "unknown"
+    if seconds < 60:
+        return "just now"
+    minutes=seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours=minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
 
 
 def _pipeline_stage_index(current_stage: str, stages: list[tuple[str, tuple[str, ...]]]) -> int:
@@ -380,6 +457,8 @@ with st.sidebar:
             st.button("📚  My presentations", use_container_width=True, disabled=True)
         if st.button("✦  Share feedback", use_container_width=True):
             share_feedback()
+        if auth_info.get("is_admin") and st.button("◈  Admin activity", use_container_width=True):
+            admin_activity()
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
             about_slideweaver()
         st.markdown(

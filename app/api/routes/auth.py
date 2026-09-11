@@ -13,6 +13,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.models.database import ActiveAccessSession, OAuthCallbackTicket, OAuthLoginState, OAuthSession, SessionLocal, User
 from app.services.access_service import AccessService, LIMIT_MESSAGE
+from app.services.admin_service import configured_admin_emails
 
 router=APIRouter(prefix="/api/auth", tags=["auth"])
 GOOGLE_AUTHORIZE_URL="https://accounts.google.com/o/oauth2/v2/auth"
@@ -43,7 +44,7 @@ def current_user(x_slideweaver_session: str | None = Header(default=None)):
         user=db.get(User, session.user_id) if session else None
         if not user:
             return {"authenticated":False, "mode":"google", "configured":_configured()}
-        return {"authenticated":True, "mode":"google", "configured":True, "email":user.email, "name":user.display_name}
+        return {"authenticated":True, "mode":"google", "configured":True, "email":user.email, "name":user.display_name, "is_admin":user.email.lower() in configured_admin_emails()}
 
 
 @router.get("/google/start")

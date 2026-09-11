@@ -3,7 +3,7 @@ import logging
 from contextlib import suppress
 from fastapi import FastAPI
 from app.models.database import init_db
-from app.api.routes import access,auth,feedback,health,presentations,jobs,llm
+from app.api.routes import access,admin,auth,feedback,health,presentations,jobs,llm
 from app.config import get_settings
 from app.services.lifecycle_service import cleanup_expired_files
 app=FastAPI(title="SlideWeaver API",version="0.1.0")
@@ -39,3 +39,4 @@ app.include_router(health.router); app.include_router(access.router); app.includ
 app.include_router(llm.router)
 app.include_router(feedback.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
