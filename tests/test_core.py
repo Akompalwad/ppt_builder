@@ -309,6 +309,47 @@ def test_qa_preserves_explicit_long_title_and_nested_source_copy(tmp_path):
     rendered_text=[shape.text for shape in Presentation(output).slides[1].shapes if getattr(shape, "has_text_frame", False)]
     assert any("Triggered by webhooks." in text and "Executes isolated builds." in text for text in rendered_text)
 
+def test_supply_chain_brief_keeps_generic_nested_divisions_phases_and_light_theme():
+    prompt='''Create a 5-slide presentation titled "Global Supply Chain Optimization: Resilience Framework 2027". Slide 1: Title Slide. Use a modern, light-themed abstract globe background with crisp lines. Slide 2: Strategic Pillars. Create 3 core operational divisions:Multi-Tier Supplier DiversificationMapping tier-1 through tier-3 dependency bottlenecks.Establishing secondary sourcing redundancy pipelines.Predictive Logistical TelemetryIntegrating IoT sensors to track route disruptions.Dynamic Inventory BufferingDeploying near-shore warehousing strategies. Slide 3: Regional Risk Analysis. Columns: [Region, Risk, Bottleneck, Mitigation] Row 1: [APAC, 8.7 / 10, Congestion, Alternative feeder networks] Slide 4: Metrics. Slide 5: Execution Roadmap. Display a 4-step horizontal timeline: Phase 1: Global Risk Audit, Phase 2: System API Integration, Phase 3: Pilot Node Deployment, Phase 4: Full Network Cutover.'''
+    brief=BriefInterpreterAgent().interpret(prompt, 5)
+    divisions=brief.by_number(2)
+    assert divisions.layout_type == LayoutType.architecture_layers and divisions.nested_bullets
+    assert [item.heading for item in divisions.elements] == ["Multi-Tier Supplier Diversification", "Predictive Logistical Telemetry", "Dynamic Inventory Buffering"]
+    assert "secondary sourcing redundancy pipelines" in divisions.elements[0].body
+    roadmap=brief.by_number(5)
+    assert roadmap.layout_type == LayoutType.step_workflow
+    assert roadmap.requirements == ["Global Risk Audit", "System API Integration", "Pilot Node Deployment", "Full Network Cutover"]
+    assert resolve_theme("Auto", prompt).name == "Modern Light"
+
+def test_slide_edit_honors_horizontal_nested_division_instruction(tmp_path):
+    spec=PresentationSpec(title="Supply chain", topic="Supply chain", slides=[
+        SlideSpec(slide_number=1, title="Strategic Pillars", purpose="Current content.", layout_type=LayoutType.architecture_layers),
+    ])
+    instruction="""Create a dense horizantal layout featuring 3 core operational divisions:Multi-Tier Supplier DiversificationMapping tier-1 through tier-3 bottlenecks.Establishing secondary sourcing redundancy.Predictive Logistical TelemetryIntegrating IoT sensors to track disruptions.Dynamic Inventory BufferingDeploying near-shore warehousing strategies."""
+    edited=PresentationOrchestrator().edit_slide(spec, 1, instruction)
+    slide=edited.slides[0]
+    assert slide.layout_type == LayoutType.feature_grid
+    assert slide.visual_spec["horizontal_nested"] is True
+    assert [item.heading for item in slide.elements] == ["Multi-Tier Supplier Diversification", "Predictive Logistical Telemetry", "Dynamic Inventory Buffering"]
+    output=build_presentation(edited, tmp_path/"horizontal-nested-edit.pptx")
+    text=[shape.text for shape in Presentation(output).slides[0].shapes if getattr(shape, "has_text_frame", False)]
+    assert any("tier-1 through tier-3" in value for value in text)
+
+def test_slide_edit_relayouts_existing_content_and_accepts_image_and_font_changes():
+    spec=PresentationSpec(title="Deck", topic="Deck", slides=[SlideSpec(
+        slide_number=1, title="Existing slide", purpose="Keep the current content.", layout_type=LayoutType.feature_grid,
+        elements=[{"heading":"One","body":"First"},{"heading":"Two","body":"Second"},{"heading":"Three","body":"Third"}],
+    )])
+    edited=PresentationOrchestrator().edit_slide(
+        spec, 1, "Change structure form 3 to column. Keep existing data. Add an image of a connected logistics network and set font size to 18pt.",
+    )
+    slide=edited.slides[0]
+    assert [item.heading for item in slide.elements] == ["One", "Two", "Three"]
+    assert slide.visual_spec["grid_columns"] == 3
+    assert slide.visual_spec["image_required"] is True
+    assert slide.visual_spec["edit_image_requested"] is True
+    assert slide.visual_spec["font_scale"] > 1
+
 def test_minimalist_and_corporate_themes_are_visually_distinct():
     from app.agents.orchestrator import THEMES
     minimalist=THEMES["Minimalist White"]

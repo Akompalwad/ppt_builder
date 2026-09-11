@@ -135,6 +135,14 @@ class PresentationService:
                     spec=PresentationSpec.model_validate(current.spec_json)
                     progress(f"Slide Content Agent — rewriting slide {slide_number}",28)
                     updated=PresentationOrchestrator().edit_slide(spec,slide_number,instruction)
+                    if updated.slides[slide_number-1].visual_spec.get("edit_image_requested"):
+                        progress("Visual Asset Agent — adding requested image",52)
+                        asset_result=ImageService().attach_slide_asset(
+                            updated, slide_number, get_settings().local_storage_path / presentation_id / "assets"
+                        )
+                        updated.metadata["last_slide_edit_image"]=asset_result
+                        if asset_result["status"] != "generated":
+                            updated.slides[slide_number-1].visual_spec.pop("edit_image_requested",None)
                     progress("Presentation QA Agent — checking edited slide",68)
                     PresentationQAAgent().validate_and_recompose(updated)
                     number=(db.scalar(select(PresentationVersion.version_number).where(PresentationVersion.presentation_id==presentation_id).order_by(PresentationVersion.version_number.desc())) or 0)+1
@@ -155,6 +163,13 @@ class PresentationService:
             p=db.get(Presentation,presentation_id); user=self._user(db,session_id)
             if not p or p.user_id != user.id: raise LookupError("Presentation not found")
             current=db.get(PresentationVersion,p.current_version_id); spec=PresentationSpec.model_validate(current.spec_json); updated=PresentationOrchestrator().edit_slide(spec,slide_number,instruction)
+            if updated.slides[slide_number-1].visual_spec.get("edit_image_requested"):
+                asset_result=ImageService().attach_slide_asset(
+                    updated, slide_number, get_settings().local_storage_path / presentation_id / "assets"
+                )
+                updated.metadata["last_slide_edit_image"]=asset_result
+                if asset_result["status"] != "generated":
+                    updated.slides[slide_number-1].visual_spec.pop("edit_image_requested",None)
             # Edits can be model-generated too; apply the same text-fit pass
             # used by new decks before writing a fresh PPTX version.
             PresentationQAAgent().validate_and_recompose(updated)

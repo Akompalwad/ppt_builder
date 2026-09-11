@@ -31,7 +31,7 @@ def explicit_brand_theme(prompt: str) -> DesignSystem | None:
     """
     text=(prompt or "").lower()
     light_request=any(phrase in text for phrase in (
-        "do not use dark backgrounds", "light theme", "light background",
+        "do not use dark backgrounds", "light theme", "light-themed", "light themed", "light background",
         "off-white", "soft cream", "light beige",
     ))
     luxury_palette=all(phrase in text for phrase in ("deep navy", "coral", "charcoal"))
@@ -42,6 +42,13 @@ def explicit_brand_theme(prompt: str) -> DesignSystem | None:
             header_color="#102A43", text_primary="#102A43", text_secondary="#353535",
             muted_text="#756D66", font_heading="Georgia", font_body="Arial",
             card_style="flat", shadow_style="none",
+        )
+    if light_request:
+        return DesignSystem(
+            name="Modern Light", background_color="#F5F8FC", surface_color="#FFFFFF",
+            primary_color="#1769AA", secondary_color="#6FA6D9", accent_color="#F28C4B",
+            header_color="#12355B", text_primary="#12355B", text_secondary="#43576B",
+            muted_text="#718398", card_style="flat", shadow_style="none",
         )
     return None
 
@@ -256,8 +263,64 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
             trace("Presentation QA Agent","completed","Recomposed copy and checked each layout against its readable-content budget.",qa_report),
         ]
         stage("Slide Composer Agent — preparing editable slide specification",92); return spec
+
+    @staticmethod
+    def _apply_deterministic_visual_edit(slide: SlideSpec, instruction: str) -> bool:
+        """Apply safe visual-only edits while retaining the slide's content."""
+        text=instruction.lower()
+        changed=False
+        column_match=re.search(r"\b(\d+)\s*(?:-|\s)*(?:column|columns)\b", text)
+        # Accept natural shorthand such as "change structure from 3 to
+        # column" as a three-column re-layout.
+        shorthand_match=re.search(r"\b(?:from|form)\s+(\d+)\s+to\s+(?:a\s+)?columns?\b", text)
+        columns=int((column_match or shorthand_match).group(1)) if (column_match or shorthand_match) else None
+        if columns and 1 <= columns <= 4 and any(word in text for word in ("layout", "structure", "column", "grid", "re-layout", "relayout")):
+            slide.layout_type=LayoutType.feature_grid
+            slide.visual_spec["grid_columns"]=columns
+            slide.metadata["brief_layout_locked"]=True
+            changed=True
+        if re.search(r"\b(?:add|use|include|replace\s+with)\b[^.\n]{0,80}\bimage\b|\bimage\b[^.\n]{0,40}\b(?:add|use|include)\b", text):
+            prompt=re.sub(r"\s+", " ", instruction).strip()
+            slide.visual_spec.update({
+                "image_required":True,
+                "image_prompt":prompt[:360],
+                "stock_query":slide.title,
+                "edit_image_requested":True,
+            })
+            changed=True
+        scale_match=re.search(r"\b(?:font|text)\s+size\s*(?:to|=|:)?\s*(\d{1,2})\s*(?:pt|point|px)?\b", text)
+        if scale_match:
+            # 14pt is the normal body baseline. Bound the result so an edit
+            # cannot make a downloaded deck unreadable or overflow its lanes.
+            slide.visual_spec["font_scale"]=max(.72,min(1.55,int(scale_match.group(1))/14))
+            changed=True
+        elif re.search(r"\b(?:increase|larger|bigger)\b[^.\n]{0,30}\b(?:font|text)\b|\b(?:font|text)\b[^.\n]{0,30}\b(?:increase|larger|bigger)\b", text):
+            slide.visual_spec["font_scale"]=1.15; changed=True
+        elif re.search(r"\b(?:decrease|smaller)\b[^.\n]{0,30}\b(?:font|text)\b|\b(?:font|text)\b[^.\n]{0,30}\b(?:decrease|smaller)\b", text):
+            slide.visual_spec["font_scale"]=.88; changed=True
+        return changed
     def edit_slide(self, spec: PresentationSpec, slide_number: int, instruction: str) -> PresentationSpec:
         copy=spec.model_copy(deep=True); slide=copy.slides[slide_number-1]; slide.metadata["last_edit_instruction"]=instruction
+        structured_adjustment=BriefInterpreterAgent().interpret_slide_adjustment(instruction)
+        if structured_adjustment:
+            # Do not ask a provider to reconstruct user-supplied nested data
+            # from prose. It is already a complete, editable slide contract.
+            slide.layout_type=structured_adjustment["layout_type"]
+            slide.elements=structured_adjustment["elements"]
+            slide.visual_spec.update(structured_adjustment["visual_spec"])
+            slide.metadata.update({
+                "brief_layout_locked":True,
+                "content_contract_locked":True,
+                "requested_element_count":structured_adjustment["exact_element_count"],
+                "last_slide_edit_provider":"deterministic structured editor",
+            })
+            self._apply_deterministic_visual_edit(slide, instruction)
+            PresentationQAAgent().validate_and_recompose(copy)
+            return copy
+        if self._apply_deterministic_visual_edit(slide, instruction):
+            slide.metadata["last_slide_edit_provider"]="deterministic visual editor"
+            PresentationQAAgent().validate_and_recompose(copy)
+            return copy
         provider=copy.metadata.get("generation_provider")
         configured_model=copy.metadata.get("generation_model")
         if provider in {"nvidia", "gemini", "ollama", "ollama_fallback"}:

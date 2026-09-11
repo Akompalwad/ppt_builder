@@ -91,3 +91,24 @@ class ImageService:
                 # should not silently collapse every cover to the same fallback.
                 results.append({"slide_number":number,"status":"failed","reason":f"{type(exc).__name__}: {str(exc)[:140]}"})
         return results
+
+    def attach_slide_asset(self, spec: PresentationSpec, slide_number: int, asset_dir: Path) -> dict:
+        """Attach one requested edit image without regenerating the deck cover."""
+        provider=self.settings.image_provider.lower()
+        if provider not in {"openai", "unsplash"}:
+            return {"slide_number":slide_number,"status":"skipped","reason":"IMAGE_PROVIDER is not configured"}
+        configuration=self.status()
+        if not configuration["ready"]:
+            return {"slide_number":slide_number,"status":"skipped","reason":configuration["message"]}
+        suffix="jpg" if provider=="unsplash" else "png"
+        path=asset_dir/f"slide-{slide_number}-edit-visual.{suffix}"
+        try:
+            provenance=self._generate_unsplash(spec,slide_number,path) if provider=="unsplash" else {"source":"AI-generated"}
+            if provider=="openai": self._generate_openai(self._prompt(spec,slide_number),path)
+            slide=spec.slides[slide_number-1]
+            slide.visual_spec["image_path"]=str(path)
+            slide.visual_spec["asset_metadata"]=provenance
+            slide.visual_spec.pop("edit_image_requested",None)
+            return {"slide_number":slide_number,"status":"generated","path":str(path),**provenance}
+        except Exception as exc:
+            return {"slide_number":slide_number,"status":"failed","reason":f"{type(exc).__name__}: {str(exc)[:140]}"}

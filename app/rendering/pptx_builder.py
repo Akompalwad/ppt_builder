@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 import re
+from contextvars import ContextVar
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
@@ -15,6 +16,7 @@ from app.rendering.layout_geometry import IMAGE_CONTENT
 
 W, H = 13.333, 7.5
 MARGIN, CONTENT_Y = .76, 2.12
+_FONT_SCALE: ContextVar[float] = ContextVar("slideweaver_font_scale", default=1.0)
 
 def rgb(value: str) -> RGBColor: return RGBColor.from_string(value.removeprefix("#"))
 def shade(hex_value: str, amount: int = 12) -> str:
@@ -129,7 +131,7 @@ def add_text(slide, text, x, y, w, h, size, color, bold=False, *, align=PP_ALIGN
     # This is the single fit gate used by every renderer layout.  Individual
     # layouts allocate their own lanes, but no text can silently spill outside
     # its containing shape in a downloaded PPTX.
-    fitted=fitted_text_size(p.text,size,w,h,bold=bold)
+    fitted=fitted_text_size(p.text,max(1,round(size*_FONT_SCALE.get())),w,h,bold=bold)
     p.font.size=Pt(fitted); p.font.bold=bold; p.font.name=font; p.font.color.rgb=rgb(color)
     return box
 
@@ -237,7 +239,10 @@ def grid_cards(slide, spec, d):
     if not elements:
         elements=[SlideElement(heading="Key insight", body=clean_copy(spec.purpose))]
     count=len(elements)
-    columns=2 if count in (2,4,6) else min(3,max(1,count)); rows=(count+columns-1)//columns
+    requested_columns=spec.visual_spec.get("grid_columns")
+    columns=(int(requested_columns) if isinstance(requested_columns,int) and 1 <= requested_columns <= 4 else
+             2 if count in (2,4,6) else min(3,max(1,count)))
+    columns=min(columns,count); rows=(count+columns-1)//columns
     gap=.24; total_w=W-2*MARGIN; card_w=(total_w-gap*(columns-1))/columns
     max_available=(4.62-gap*(rows-1))/rows
     required=[]
@@ -359,6 +364,19 @@ def architecture(slide, spec, d):
             add_bullets(slide,bullet_points(item,2),x+.36,y+.56,width-.72,layer_h-.70,d)
         else:
             add_text(slide,element_text(item),x+.32,y+.60,width-.64,layer_h-.76,text_size(element_text(item),15,width-.64),d.text_secondary)
+
+def horizontal_nested(slide, spec, d):
+    """Render supplied nested divisions as readable left-to-right columns."""
+    items=spec.elements[:3]
+    count=max(1,len(items)); gap=.26; width=(W-2*MARGIN-gap*(count-1))/count
+    for index,item in enumerate(items):
+        x=MARGIN+index*(width+gap)
+        add_surface(slide,x,2.10,width,3.72,d,emphasis=index==0)
+        add_text(slide,f"{index+1:02d}",x+.24,2.34,width-.48,.18,10,d.primary_color,True)
+        heading=item.heading or f"Division {index+1}"
+        heading_h=.78 if len(clean_copy(heading))>28 else .46
+        add_text(slide,heading,x+.24,2.70,width-.48,heading_h,text_size(heading,19,width-.48),d.text_primary,True,font=d.font_heading)
+        add_bullets(slide,bullet_points(item,2),x+.26,2.70+heading_h+.18,width-.52,2.48-heading_h,d)
 
 def title_slide(slide, spec, d):
     dynamic_path=spec.visual_spec.get("image_path")
@@ -694,6 +712,7 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
     prs=Presentation(); prs.slide_width=Inches(W); prs.slide_height=Inches(H); blank=prs.slide_layouts[6]; d=spec.design_system
     for spec_slide in spec.slides:
         slide=prs.slides.add_slide(blank); slide.background.fill.solid(); slide.background.fill.fore_color.rgb=rgb(d.background_color)
+        _FONT_SCALE.set(float(spec_slide.visual_spec.get("font_scale",1.0)))
         apply_background_treatment(slide,spec_slide.visual_spec.get("background_treatment"),d)
         if spec_slide.layout_type.value=="title_slide": title_slide(slide,spec_slide,d)
         elif spec_slide.layout_type.value=="section_slide": section_interlude(slide,spec_slide,d)
@@ -708,6 +727,7 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
             elif variant=="cycle_loop": cycle_loop(slide,spec_slide,d)
             elif variant=="chevron_flow": chevron_flow(slide,spec_slide,d)
             elif variant=="isometric_stack": isometric_stack(slide,spec_slide,d)
+            elif spec_slide.visual_spec.get("horizontal_nested"): horizontal_nested(slide,spec_slide,d)
             elif layout in {"step_workflow","process_flow","timeline"}: workflow(slide,spec_slide,d)
             elif layout=="architecture_layers": architecture(slide,spec_slide,d)
             elif layout=="two_column": two_columns(slide,spec_slide,d)

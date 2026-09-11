@@ -43,6 +43,7 @@ class BriefSlide(BaseModel):
     contact_matrix: bool = False
     nested_bullets: bool = False
     variable_rows: bool = False
+    visual_instruction: str | None = None
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -64,6 +65,7 @@ class BriefSlide(BaseModel):
                 **({"contact_matrix":True} if self.contact_matrix else {}),
                 **({"nested_bullets":True} if self.nested_bullets else {}),
                 **({"variable_rows":True} if self.variable_rows else {}),
+                **({"brief_visual_instruction":self.visual_instruction} if self.visual_instruction else {}),
             },
             metadata={"brief_layout_locked": True, "requested_element_count":self.exact_element_count},
         )
@@ -225,22 +227,31 @@ class BriefInterpreterAgent:
         result: dict={"requirements":[], "elements":[], "table_data":None,
                       "exact_element_count":None, "content_instruction":None, "contact_matrix":False,
                       "nested_bullets":False, "variable_rows":False}
-        # Three-tier architecture briefs are often pasted without line breaks.
-        # Detect named Layer/Matrix/Engine headings at sentence boundaries and
-        # preserve their following sentences as nested bullet content.
-        tier_count=re.search(r"\b(\d+)\s+main\s+architectural\s+tiers?\b", section, re.I)
+        # Nested lists are often pasted as a single line. Split only at
+        # camel-case boundaries, then recover title-case parent headings and
+        # preserve all intervening source sentences as their children.
+        tier_count=re.search(r"\b(\d+)\s+(?:main\s+)?(?:architectural\s+tiers?|core\s+operational\s+divisions?|strategic\s+pillars?)\b", section, re.I)
         if tier_count:
-            normalized=re.sub(r"(?<=[a-z])(?=[A-Z])", " ", section)
-            matches=list(re.finditer(r"(?:^|[.!:]\s*)([A-Z][A-Za-z0-9 &/-]+?(?:Layer|Matrix|Engine))\b", normalized))
+            source=section[tier_count.end():]
+            if ":" in source:
+                source=source.split(":", 1)[1]
+            normalized_source=re.sub(r"(?<=[.!?])(?=[A-Z])", "\n", source)
+            normalized_source=re.sub(r"(?<=[a-z])(?=[A-Z][a-z])", "\n", normalized_source)
+            lines=[line.strip() for line in normalized_source.splitlines() if line.strip()]
+            heading_pattern=re.compile(r"(?:[A-Z][A-Za-z0-9-]*|&)(?:\s+(?:[A-Z][A-Za-z0-9-]*|&)){1,6}$")
+            architecture_indexes=[index for index,line in enumerate(lines) if re.search(r"(?:Layer|Matrix|Engine)\.?$", line)]
+            heading_indexes=(architecture_indexes if len(architecture_indexes) >= int(tier_count.group(1)) else
+                             [index for index,line in enumerate(lines) if heading_pattern.fullmatch(line.rstrip("."))])
             tiers=[]
-            for index, match in enumerate(matches[:int(tier_count.group(1))]):
-                detail=normalized[match.end():matches[index+1].start() if index+1 < len(matches) else len(normalized)]
+            for position, line_index in enumerate(heading_indexes[:int(tier_count.group(1))]):
+                next_index=heading_indexes[position+1] if position+1 < len(heading_indexes) else len(lines)
+                detail=" ".join(lines[line_index+1:next_index])
                 detail=re.sub(r"(?<=[.!?])(?=[A-Z])", " ", detail)
                 detail=re.sub(r"\s+", " ", detail).strip()
                 if detail and detail[-1] not in ".!?":
                     detail += "."
-                if match.group(1).strip():
-                    tiers.append(SlideElement(type="tier", heading=match.group(1).strip(), body=detail))
+                if lines[line_index]:
+                    tiers.append(SlideElement(type="tier", heading=lines[line_index].rstrip("."), body=detail))
             if len(tiers)==int(tier_count.group(1)):
                 result["elements"]=tiers
                 result["exact_element_count"]=len(tiers)
@@ -270,7 +281,7 @@ class BriefInterpreterAgent:
                 return result
 
         steps=[]
-        for match in re.finditer(r"\bstep\s*(\d+)\s*:\s*(.+?)(?=(?:[.,]|\n)\s*(?:step\s*\d+\s*:|test\b)|$)", section, re.I | re.S):
+        for match in re.finditer(r"\b(?:step|phase)\s*(\d+)\s*:\s*(.+?)(?=(?:[.,]|\n)\s*(?:(?:step|phase)\s*\d+\s*:|test\b)|$)", section, re.I | re.S):
             name=re.sub(r"\s+", " ", match.group(2)).strip(" .")
             if name:
                 steps.append((int(match.group(1)), name))
@@ -278,7 +289,7 @@ class BriefInterpreterAgent:
             steps=[name for _,name in sorted(steps)]
             result["requirements"]=steps
             result["exact_element_count"]=len(steps)
-            result["content_instruction"]="Render every requested roadmap step in reading order. Keep the horizontal sequence inside the slide."
+            result["content_instruction"]="Render every requested roadmap phase in reading order. Keep the horizontal sequence inside the slide."
             return result
 
         metrics=re.findall(r"(?:^|\s)[\"“]?([+$-]?\d[\d,.]*(?:%|[xX])?|\$[\d,.]+[KMB]?)[\"”]?\s*\(\s*Label\s*:\s*([^)]+)\)", section, re.I)
@@ -303,6 +314,29 @@ class BriefInterpreterAgent:
             result["contact_matrix"]=True
             result["content_instruction"]="Create an On-Call Matrix with distinct escalation fields. Preserve each generated contact value in its own aligned cell; never use duplicate generic headings."
         return result
+
+    def interpret_slide_adjustment(self, instruction: str) -> dict | None:
+        """Extract an explicit one-slide layout edit without requiring Slide N.
+
+        Slide editing receives a fragment rather than a full deck brief.  This
+        parser deliberately reuses the same protected nested-data grammar as
+        deck creation, then honours an orientation override such as
+        ``horizontal layout`` before the renderer sees the instruction.
+        """
+        details=self._structured_slide_details(instruction, 1)
+        if not details["nested_bullets"]:
+            return None
+        horizontal=bool(re.search(r"\b(?:horiz[oa]ntal|left[- ]to[- ]right|across)\b", instruction, re.I))
+        return {
+            "layout_type":LayoutType.feature_grid if horizontal else LayoutType.architecture_layers,
+            "elements":details["elements"],
+            "exact_element_count":details["exact_element_count"],
+            "visual_spec":{
+                "nested_bullets":True,
+                "horizontal_nested":horizontal,
+                "content_instruction":details["content_instruction"],
+            },
+        }
 
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
         if self.classify(prompt).mode != "structured":
@@ -355,6 +389,8 @@ class BriefInterpreterAgent:
             if number == 1 and not explicit_title and section_label.casefold() in {"title slide", "cover slide", "title"} and declared_deck_title:
                 title=declared_deck_title
             subtitle_values=self._lines_after(section, "Subtitle")
+            visual_match=re.search(r"\b(?:use|show|feature)\s+([^.!]*\bbackground[^.!]*)", section, re.I)
+            visual_instruction=visual_match.group(1).strip() if visual_match else None
             requirements=[]
             for marker in ("Topic Areas", "Steps to cover", "Tiers to cover", "Key Outcomes"):
                 requirements.extend(self._lines_after(section, marker))
@@ -373,13 +409,13 @@ class BriefInterpreterAgent:
                 layout=LayoutType.key_metrics
             elif re.search(r"\b(?:split-screen|two[- ]column|2[- ]column)\b", section, re.I):
                 layout=LayoutType.two_column
-            elif details["requirements"] and re.search(r"\broadmap|\bsequence|\bstep\b", section, re.I):
+            elif details["requirements"] and re.search(r"\broadmap|\bsequence|\bstep\b|\bphase\b", section, re.I):
                 layout=LayoutType.step_workflow
             slides.append(BriefSlide(
                 slide_number=number, title=title, subtitle=subtitle_values[0] if subtitle_values else None,
                 layout_type=layout, requirements=requirements, elements=details["elements"],
                 table_data=details["table_data"], exact_element_count=details["exact_element_count"],
-                content_instruction=details["content_instruction"], contact_matrix=details["contact_matrix"], nested_bullets=details["nested_bullets"], variable_rows=details["variable_rows"],
+                content_instruction=details["content_instruction"], contact_matrix=details["contact_matrix"], nested_bullets=details["nested_bullets"], variable_rows=details["variable_rows"], visual_instruction=visual_instruction,
             ))
         if slides:
             return PresentationBrief(slides=slides, deck_title=declared_deck_title)

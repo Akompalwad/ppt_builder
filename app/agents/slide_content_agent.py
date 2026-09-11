@@ -185,6 +185,7 @@ Chart data supplied by the user: {directive.chart_data or "none"}
 Table data supplied by the user: {directive.table_data or "none"}
 Required number of visible elements: {directive.exact_element_count or "normal"}
 Additional rendering contract: {directive.content_instruction or "none"}
+Requested visual direction: {directive.visual_instruction or "none"}
 ''' if directive else "")
             prose_contract=(f'''This is a non-negotiable prose constraint for this slide. Meet it without exposing this instruction in visible text.
 Required layout: {constraint.layout_type.value if constraint and constraint.layout_type else "model choice"}
