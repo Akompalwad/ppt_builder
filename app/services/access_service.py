@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from app.config import get_settings
-from app.models.database import ActiveAccessSession, SessionLocal
+from app.models.database import ActiveAccessSession, OAuthSession, SessionLocal
 
 
 LIMIT_MESSAGE="Login after sometime — user limit is exceeded at this time."
@@ -23,8 +23,17 @@ class AccessService:
             if existing:
                 existing.last_seen_at=now
                 db.commit()
+                if settings.auth_mode.lower() == "google":
+                    active=db.query(ActiveAccessSession).join(OAuthSession, ActiveAccessSession.id == OAuthSession.session_id).count()
+                    return True, active
                 return True, db.query(ActiveAccessSession).count()
-            active=db.query(ActiveAccessSession).count()
+            # Once Google OAuth is enabled, only authenticated OAuth sessions
+            # consume the configured user limit. This deliberately excludes
+            # stale browser-only sessions created while testing mode was on.
+            active=(
+                db.query(ActiveAccessSession).join(OAuthSession, ActiveAccessSession.id == OAuthSession.session_id).count()
+                if settings.auth_mode.lower() == "google" else db.query(ActiveAccessSession).count()
+            )
             if active >= settings.access_max_active_users:
                 db.commit()
                 return False, active
