@@ -70,7 +70,9 @@ st.markdown("""
   }
   [data-testid="stSidebar"] [data-testid="stButton"] > button,
   [data-testid="stSidebar"] [data-testid="stLinkButton"] a {
+    width: 100%;
     min-height: 2.6rem;
+    box-sizing: border-box;
     border: 1px solid rgba(70, 232, 211, .40) !important;
     border-radius: .65rem !important;
     background: linear-gradient(110deg, rgba(31, 82, 103, .50), rgba(32, 43, 92, .54)) !important;
@@ -223,6 +225,30 @@ def admin_activity():
             if stage:=user.get("current_stage"):
                 status=(user.get("job_status") or "unknown").title()
                 st.caption(f"Latest job · {status}: {stage}")
+    st.divider()
+    feedback=snapshot.get("feedback", [])
+    st.subheader(f"Recent feedback ({len(feedback)})")
+    if not feedback:
+        st.caption("No feedback has been submitted yet.")
+    for report in feedback:
+        label=f"{str(report.get('category', 'feedback')).title()} · {relative_time(report.get('created_at'))}"
+        with st.expander(label):
+            st.write(report.get("message") or "")
+            if prompt:=report.get("prompt"):
+                st.markdown("**Prompt**")
+                st.code(prompt, language=None)
+            if error_details:=report.get("error_details"):
+                st.markdown("**Error details**")
+                st.code(error_details, language=None)
+            if reply_to:=report.get("reply_to"):
+                st.caption(f"Reply address: {reply_to}")
+            if report.get("has_screenshot"):
+                try:
+                    image=httpx.get(f"{API}/api/admin/feedback/{report['id']}/screenshot", headers=ACCESS_HEADERS, timeout=10)
+                    image.raise_for_status()
+                    st.image(image.content, caption="Submitted screenshot", use_container_width=True)
+                except httpx.HTTPError:
+                    st.warning("The submitted screenshot is no longer available.")
 
 if auth_error:=st.query_params.get("auth_error"):
     st.error(str(auth_error))
@@ -464,7 +490,7 @@ with st.sidebar:
         st.markdown(
             f'''<a href="{GITHUB_PROFILE_URL}" target="_blank" rel="noopener noreferrer"
             aria-label="GitHub profile: Akompalwad"
-            style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:.62rem .75rem;
+            style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:2.6rem;box-sizing:border-box;padding:.5rem .75rem;
             border:1px solid rgba(70,232,211,.40);border-radius:.65rem;color:#e8ffff;text-decoration:none;font-weight:600;
             background:linear-gradient(110deg,rgba(31,82,103,.50),rgba(32,43,92,.54));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 22px rgba(0,0,0,.18);">
             <img src="https://github.githubassets.com/favicons/favicon.svg" alt="GitHub" width="18" height="18">Akompalwad</a>''',

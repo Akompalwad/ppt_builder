@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.models.database import ActiveAccessSession, GenerationJob, OAuthSession, Presentation, SessionLocal, User
+from app.models.database import ActiveAccessSession, FeedbackReport, GenerationJob, OAuthSession, Presentation, SessionLocal, User
 
 
 def configured_admin_emails() -> set[str]:
@@ -60,9 +60,20 @@ def activity_snapshot() -> dict:
                 "job_status":latest_job.status if latest_job else None,
                 "current_stage":latest_job.current_stage if latest_job else None,
             })
+        feedback=db.scalars(select(FeedbackReport).order_by(FeedbackReport.created_at.desc()).limit(30)).all()
         return {
             "active_users":len(users),
             "max_active_users":get_settings().access_max_active_users,
             "session_ttl_minutes":get_settings().access_session_ttl_minutes,
             "users":users,
+            "feedback":[{
+                "id":report.id,
+                "category":report.category,
+                "message":report.message,
+                "prompt":report.prompt,
+                "error_details":report.error_details,
+                "reply_to":report.reply_to,
+                "created_at":report.created_at.isoformat(),
+                "has_screenshot":bool(report.screenshot_path),
+            } for report in feedback],
         }
