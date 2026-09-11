@@ -1,4 +1,4 @@
-"""Generate a presentation through one short NVIDIA request per slide."""
+"""Generate a presentation through one compact, slide-scoped request at a time."""
 from __future__ import annotations
 
 from app.llm.gateway import LLMGateway
@@ -7,7 +7,27 @@ from app.schemas.presentation import CreatePresentationRequest, LayoutType, Pres
 
 
 class SlideContentAgent:
-    """Keeps each NVIDIA completion small enough to avoid deck-wide timeouts."""
+    """Keeps each provider completion small enough to avoid deck-wide timeouts."""
+
+    @staticmethod
+    def _deck_context(request: CreatePresentationRequest, brief) -> tuple[str, str]:
+        """Return stable deck grounding without replaying the full user prompt.
+
+        The brief interpreter has already extracted slide-level contracts.  A
+        per-slide model call needs only a concise statement of the deck's
+        subject, not the instructions, data, and layout requirements for all
+        other slides.  This materially lowers token use and prevents one
+        slide's requirements from bleeding into another.
+        """
+        declared_title=(getattr(brief, "deck_title", None) or "").strip()
+        source=declared_title or request.topic
+        source=" ".join(source.split())
+        # Stop before an explicit slide contract when no deck title was
+        # supplied.  Preserve a normal sentence for open-ended prompts.
+        source=source.split("Slide 1:", 1)[0].strip()
+        source=source[:220].rstrip(" ,;:-")
+        deck_title=declared_title or source or "Presentation"
+        return deck_title, source
 
     @staticmethod
     def _preserve_contract_elements(directive, generated: dict) -> list[dict]:
@@ -24,6 +44,20 @@ class SlideContentAgent:
             # IDs, headings, and the user's seed detail are authoritative;
             # the cloud agent may improve the explanatory copy only.
             merged=element.model_dump()
+            if directive.nested_bullets:
+                # Nested technical statements came directly from the user.
+                # They are source data, not optional model copy, and must
+                # survive even if the provider emits a flat element list.
+                preserved.append(merged)
+                continue
+            if element.type == "metric" and element.value:
+                # An explicit metric has two immutable visible fields: the
+                # numeric value and its descriptive heading.  Models often
+                # echo the numeric value as body copy, producing a second
+                # callout below the label.  Keep optional body copy empty
+                # unless the user supplied it themselves.
+                preserved.append(merged)
+                continue
             for field in ("body", "subtext", "value", "label"):
                 if candidate.get(field):
                     merged[field]=candidate[field]
@@ -113,11 +147,18 @@ class SlideContentAgent:
                 placeholders.append(SlideSpec(
                     slide_number=number, title=request.topic, purpose="Develop this story beat.",
                     layout_type=constraint.layout_type if constraint and constraint.layout_type else LayoutType.feature_grid,
-                    visual_spec={"constraint_requirements":constraint.requirements, "constraint_layout":constraint.layout_type.value if constraint and constraint.layout_type else None} if constraint else {},
+                    visual_spec={
+                        "constraint_requirements":constraint.requirements,
+                        "constraint_layout":constraint.layout_type.value if constraint and constraint.layout_type else None,
+                        "constraint_story_stage":constraint.story_stage,
+                        "constraint_story_intent":constraint.story_intent,
+                        "constraint_preferred_recipe":constraint.preferred_recipe,
+                    } if constraint else {},
                     metadata={"content_contract_locked":bool(constraint)},
                 ))
+        deck_title, deck_focus=self._deck_context(request, brief)
         spec=PresentationSpec(
-            title=request.topic, topic=request.topic, target_audience=request.audience,
+            title=deck_title, topic=request.topic, target_audience=request.audience,
             language=request.language, theme=theme_name, slides=placeholders,
         )
         plan=storyline.apply(spec)
@@ -141,15 +182,25 @@ Required subtitle: {directive.subtitle or "none"}
 Required layout: {directive.layout_type.value}
 Required items: {directive.requirements}
 Chart data supplied by the user: {directive.chart_data or "none"}
+Table data supplied by the user: {directive.table_data or "none"}
+Required number of visible elements: {directive.exact_element_count or "normal"}
+Additional rendering contract: {directive.content_instruction or "none"}
 ''' if directive else "")
             prose_contract=(f'''This is a non-negotiable prose constraint for this slide. Meet it without exposing this instruction in visible text.
 Required layout: {constraint.layout_type.value if constraint and constraint.layout_type else "model choice"}
 Required content: {constraint.requirements if constraint else "none"}
 Required element count: {constraint.exact_element_count if constraint and constraint.exact_element_count else "normal"}
+Narrative position: {constraint.story_stage if constraint else "model choice"}
+Narrative instruction: {constraint.story_intent if constraint else "none"}
 ''' if constraint else "")
-            element_count_rule=(f"Use exactly {constraint.exact_element_count} elements for this slide." if constraint and constraint.exact_element_count else "Use zero or one element for the title slide, and 2–3 elements for other slides (four only for a true comparison).")
+            element_count_rule=(
+                f"Use exactly {directive.exact_element_count} elements for this slide." if directive and directive.exact_element_count else
+                f"Use exactly {constraint.exact_element_count} elements for this slide." if constraint and constraint.exact_element_count else
+                "Use zero or one element for the title slide, and 2–3 elements for other slides (four only for a true comparison)."
+            )
             prompt=f'''Create exactly one PowerPoint slide as one JSON object.
-Topic: {request.topic}
+Deck title: {deck_title}
+Deck focus: {deck_focus}
 Audience: {request.audience}
 Tone: {request.tone}
 Language: {request.language}
@@ -165,7 +216,7 @@ Visual asset rule: {"Set image_required to true for this cover and provide a pre
 Return one valid JSON object only. It must include title, subtitle, layout_type, purpose, elements, and visual_spec. Each element must include type, heading, and body. visual_spec must include icon_concept, image_required, image_prompt, and stock_query.
 
 Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architecture_layers, comparison, timeline, process_flow, dashboard, two_column, key_metrics, summary, content_with_visual.
-{element_count_rule} Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context".'''
+{element_count_rule} Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context". Do not infer, mention, or fulfill instructions belonging to any other slide.'''
             max_tokens=get_settings().gemini_max_output_tokens if provider == "gemini" else 1200
             generated=gateway.generate_json(prompt, max_tokens=max_tokens, temperature=.1)
             if directive and (directive.elements or directive.requirements) and isinstance(generated, dict):

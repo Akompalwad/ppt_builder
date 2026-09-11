@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import httpx
 
 from app.llm.base import BaseLLMProvider
@@ -39,11 +40,28 @@ class GeminiProvider(BaseLLMProvider):
         reservation=self.gate.reserve(estimate_request_tokens(prompt,max_tokens))
         actual_tokens=0
         try:
-            response=httpx.post(
-                f"{self.base_url}/models/{self.model}:generateContent",
-                headers={"x-goog-api-key":self.api_key,"Content-Type":"application/json"},
-                json=payload, timeout=self.timeout,
-            )
+            # A 503 is a transient Google service-capacity response, not a
+            # malformed prompt.  Structured decks make one request per slide,
+            # so treating the first transient failure as fatal unnecessarily
+            # sends an otherwise healthy deck to deterministic fallback.
+            response=None
+            for attempt in range(3):
+                response=httpx.post(
+                    f"{self.base_url}/models/{self.model}:generateContent",
+                    headers={"x-goog-api-key":self.api_key,"Content-Type":"application/json"},
+                    json=payload, timeout=self.timeout,
+                )
+                if response.status_code not in {429, 502, 503, 504} or attempt == 2:
+                    break
+                retry_after=response.headers.get("Retry-After", "")
+                try: delay=min(15.0, max(.5, float(retry_after)))
+                except ValueError: delay=float(2**attempt)
+                logger.warning(
+                    "Gemini returned HTTP %s; retrying in %ss (%s/3)",
+                    response.status_code, delay, attempt+1,
+                )
+                time.sleep(delay)
+            assert response is not None
             response.raise_for_status(); result=response.json()
             actual_tokens=int(result.get("usageMetadata",{}).get("totalTokenCount",0))
             parts=result["candidates"][0]["content"]["parts"]
@@ -56,7 +74,7 @@ class GeminiProvider(BaseLLMProvider):
         except httpx.HTTPStatusError as exc:
             if self.debug_responses:
                 logger.warning("Gemini request failed model=%s status=%s response=%r",self.model,exc.response.status_code,exc.response.text[:1000])
-            raise GeminiProviderError(f"Gemini returned HTTP {exc.response.status_code}.") from exc
+            raise GeminiProviderError(f"Gemini returned HTTP {exc.response.status_code} after 3 attempts.") from exc
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
             if isinstance(exc, GeminiProviderError):
                 raise

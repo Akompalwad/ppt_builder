@@ -74,7 +74,12 @@ class StorylineAgent:
         beats: list[StoryBeat]=[]
         middle=spec.slides[1:-1]
         for index, slide in enumerate(spec.slides):
-            if index == 0:
+            constrained_stage=slide.visual_spec.get("constraint_story_stage")
+            constrained_intent=slide.visual_spec.get("constraint_story_intent")
+            constrained_recipe=slide.visual_spec.get("constraint_preferred_recipe")
+            if constrained_stage:
+                stage, intent, recipe=constrained_stage, constrained_intent or "Meet the user-authored narrative constraint.", constrained_recipe or "insight"
+            elif index == 0:
                 stage, intent, recipe="opening", "Introduce the central question.", "cover"
             elif index == len(spec.slides)-1:
                 stage, intent, recipe="close", "Land on a memorable recommendation.", "close"

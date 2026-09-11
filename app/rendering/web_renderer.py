@@ -11,6 +11,13 @@ from app.rendering.layout_geometry import IMAGE_CONTENT, x_percent, y_percent
 def esc(value: object) -> str: return html.escape(str(value or ""))
 def body(element) -> str: return esc(element.body or element.subtext or element.value or "")
 
+def metric_body(element) -> str:
+    """Do not mirror malformed duplicate metric fields in browser preview."""
+    value=(element.value or "").strip().casefold()
+    heading=(element.heading or element.label or "").strip().casefold()
+    content=(element.body or element.subtext or "").strip()
+    return "" if content.casefold() in {value, heading} else esc(content)
+
 def mix(first: str, second: str, amount: float) -> str:
     """Mirror the opaque theme tint used by the PowerPoint renderer."""
     left=first.removeprefix("#"); right=second.removeprefix("#")
@@ -45,6 +52,18 @@ def chart_markup(slide: SlideSpec) -> str:
     bars="".join(f"<section class='chart-bar'><span style='height:{value/maximum*100:.2f}%'></span><small>{esc(label)}</small><b>{value:g}</b></section>" for label,value in zip(raw["categories"],numeric,strict=True))
     return f"<div class='native-chart-preview'><strong>{esc(series[0].get('name') or 'Source data')}</strong><div class='chart-bars'>{bars}</div></div>"
 
+def table_markup(slide: SlideSpec) -> str:
+    """Mirror the native editable table instead of pretending it is cards."""
+    raw=slide.visual_spec.get("table_data")
+    if not isinstance(raw,dict): return ""
+    headers=raw.get("headers"); rows=raw.get("rows")
+    if not isinstance(headers,list) or not headers or not isinstance(rows,list) or not rows:
+        return ""
+    if any(not isinstance(row,list) or len(row)!=len(headers) for row in rows): return ""
+    head="".join(f"<th>{esc(value)}</th>" for value in headers)
+    body_rows="".join("<tr>"+"".join(f"<td>{esc(value)}</td>" for value in row)+"</tr>" for row in rows)
+    return f"<table class='data-table'><thead><tr>{head}</tr></thead><tbody>{body_rows}</tbody></table>"
+
 def background_css(slide: SlideSpec, d) -> str:
     """Mirror the portable PowerPoint gradient with restrained CSS layers."""
     treatment=str(slide.visual_spec.get("background_treatment") or "clean").lower()
@@ -76,12 +95,17 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
     if slide.layout_type.value=="title_slide":
         content=f'''<div class="title-copy"><span class="eyebrow">SLIDEWEAVER / BRIEF</span><h1>{esc(slide.title)}</h1><p>{esc(slide.subtitle or slide.purpose)}</p></div>{f'<img class="hero" src="{image}" />' if image else '<div class="orb"></div>'}'''
         kind="title"
+    elif table:=table_markup(slide):
+        content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header>{table}"; kind=""
     elif chart:=chart_markup(slide):
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header>{chart}"; kind=""
     elif image:
         content=f'''<header><span class="eyebrow">{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class="visual-layout"><div class="visual-copy"><strong>{esc(slide.purpose)}</strong><div class="visual-cards">{cards(slide)}</div></div><img class="content-image" src="{image}" /></div>'''; kind=""
+    elif slide.visual_spec.get("contact_matrix"):
+        contacts="".join(f"<section class='contact-cell'><span>{i+1:02d}</span><h3>{esc(item.heading or item.label or 'Escalation contact')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:6]))
+        content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='contact-matrix'>{contacts}</div>"; kind=""
     elif slide.visual_spec.get("visual_variant")=="chevron_flow":
-        steps="".join(f"<section class='process-stage'><span>{i+1:02d}</span><h3>{esc(item.heading or f'Step {i+1}')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:4]))
+        steps="".join(f"<section class='process-stage'><span>{i+1:02d}</span><h3>{esc(item.heading or f'Step {i+1}')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:5]))
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='process-stages'>{steps}</div>"; kind=""
     elif slide.visual_spec.get("visual_variant")=="cycle_loop":
         nodes="".join(f"<section class='cycle-node node-{i+1}'><h3>{esc(item.heading or f'Stage {i+1}')}</h3></section>" for i,item in enumerate(slide.elements[:4]))
@@ -90,10 +114,10 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
         layers="".join(f"<section class='iso-layer'><h3>{esc(item.heading or 'Layer')}</h3><p>{body(item)}</p></section>" for item in reversed(slide.elements[:4]))
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='iso-stack'>{layers}</div>"; kind=""
     elif slide.layout_type.value=="architecture_layers":
-        layers="".join(f"<section class='architecture-layer layer-{i+1}'><h3>{esc(item.heading or f'Layer {i+1}')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:4]))
+        layers="".join(f"<section class='architecture-layer layer-{i+1}'><h3>{esc(item.heading or f'Layer {i+1}')}</h3><p>{esc((item.body or '').replace(chr(10), ' • '))}</p></section>" for i,item in enumerate(slide.elements[:4]))
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='architecture-layers'>{layers}</div>"; kind=""
     elif slide.layout_type.value in {"step_workflow", "process_flow", "timeline"}:
-        stages="".join(f"<section class='standard-flow-stage'><span>{i+1:02d}</span><h3>{esc(item.heading or f'Step {i+1}')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:4]))
+        stages="".join(f"<section class='standard-flow-stage'><span>{i+1:02d}</span><h3>{esc(item.heading or f'Step {i+1}')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:5]))
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='standard-flow'>{stages}</div>"; kind=""
     elif slide.layout_type.value=="two_column":
         groups=[]
@@ -101,11 +125,14 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
             points=[p.strip(' •') for p in (item.body or '').replace('\\n','\n').split('\n') if p.strip()]
             groups.append(f"<section class='column'><span class='index'>{i+1:02d}</span><h3>{esc(item.heading)}</h3>"+"".join(f"<p>• {esc(point)}</p>" for point in points[:3])+"</section>")
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='columns'>{''.join(groups)}</div>"; kind=""
+    elif slide.visual_spec.get("variable_rows"):
+        rows="".join(f"<section class='variable-row'><span class='index'>{i+1:02d}</span><h3>{esc(item.heading or f'Node {i+1}')}</h3>{f'<p>{body(item)}</p>' if body(item) else ''}</section>" for i,item in enumerate(slide.elements[:4]))
+        content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='variable-rows'>{rows}</div>"; kind=""
     elif slide.layout_type.value=="comparison":
-        rows="".join(f"<section class='compare-row'><span class='index'>{i+1:02d}</span><h3>{esc(item.heading or 'Decision lens')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:3]))
-        content=f"<header><span class='eyebrow'>{slide.slide_number:02d} · DECISION LENSES</span><h2>{esc(slide.title)}</h2></header><div class='compare-rows'>{rows}</div>"; kind=""
+        rows="".join(f"<section class='compare-row'><span class='index'>{i+1:02d}</span><h3>{esc(item.heading or 'Decision lens')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:4]))
+        content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='compare-rows'>{rows}</div>"; kind=""
     elif slide.layout_type.value=="key_metrics":
-        metrics="".join(f"<section class='metric'><span>0{i+1}</span><h3>{esc(item.heading or 'Evidence')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:3]))
+        metrics="".join(f"<section class='metric'><span>0{i+1}</span>{f'<b class=metric-value>{esc(item.value)}</b>' if item.value else ''}<h3>{esc(item.heading or 'Evidence')}</h3>{f'<p>{metric_body(item)}</p>' if metric_body(item) else ''}</section>" for i,item in enumerate(slide.elements[:3]))
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='metrics'>{metrics}</div>"; kind=""
     elif slide.layout_type.value=="content_with_visual":
         support="".join(f"<section class='support'><h3>{esc(item.heading or 'Key point')}</h3><p>{body(item)}</p></section>" for item in slide.elements[:2])
@@ -118,14 +145,17 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
       header {{ position:relative; z-index:1; }} h1,h2,h3,p {{ margin:0; }} h1,h2,h3 {{ font-family:{d.font_heading},Arial,sans-serif; }} h2 {{ color:{d.header_color}; font-size:clamp(23px,3vw,42px); line-height:1.04; max-width:88%; }}
       .eyebrow,.index {{ color:{d.primary_color}; font-weight:800; font-size:11px; letter-spacing:.06em; }} .subtitle {{ color:{d.text_secondary}; margin-top:10px; }}
       .cards {{ display:grid; grid-template-columns:repeat({card_columns},1fr); gap:14px; margin-top:8%; }} .card,.column {{ background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; border-radius:12px; padding:18px; min-height:205px; box-shadow:8px 10px 22px rgba(0,0,0,.38); }}
+      .contact-matrix {{ display:grid; grid-template-columns:repeat({4 if len(slide.elements)<=4 else 3},1fr); gap:14px; margin-top:8%; }} .contact-cell {{ min-width:0; min-height:190px; padding:17px; border:1px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); box-shadow:8px 10px 22px rgba(0,0,0,.3); }} .contact-cell span {{ color:{d.primary_color}; font-size:11px; font-weight:800; }} .contact-cell h3 {{ color:{d.text_primary}; font-size:clamp(14px,1.35vw,20px); margin:18px 0 12px; }} .contact-cell p {{ color:{d.text_secondary}; font-size:clamp(10px,.95vw,14px); line-height:1.32; overflow-wrap:anywhere; }}
       .card h3,.column h3 {{ color:{d.primary_color}; font-size:clamp(16px,1.55vw,22px); margin:17px 0 12px; }} .card p,.column p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); line-height:1.35; }}
       .columns {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-top:8%; }} .column p {{ margin:11px 0; }}
       .compare-rows {{ margin-top:5%; display:grid; gap:12px; }} .compare-row {{ display:grid; grid-template-columns:55px 30% 1fr; align-items:center; padding:16px 18px; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; box-shadow:8px 10px 22px rgba(0,0,0,.38); }} .compare-row h3 {{ color:{d.text_primary}; font-size:clamp(16px,1.65vw,23px); }} .compare-row p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); }}
-      .metrics {{ display:grid; grid-template-columns:repeat(3,1fr); gap:26px; margin-top:9%; }} .metric {{ border-left:6px solid {d.primary_color}; padding:12px 20px; min-height:220px; }} .metric span {{ color:{d.primary_color}; font-weight:800; font-size:13px; }} .metric h3 {{ font-size:clamp(18px,1.9vw,28px); margin:24px 0 14px; }} .metric p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); line-height:1.4; }}
+      .variable-rows {{ display:grid; gap:12px; margin-top:6%; }} .variable-row {{ min-height:68px; display:grid; grid-template-columns:55px minmax(0,1.7fr) minmax(0,1fr); align-items:center; gap:14px; padding:13px 18px; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; box-shadow:8px 10px 22px rgba(0,0,0,.3); }} .variable-row h3 {{ color:{d.text_primary}; font-size:clamp(14px,1.5vw,21px); line-height:1.1; }} .variable-row p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); line-height:1.3; }}
+      .metrics {{ display:grid; grid-template-columns:repeat(3,1fr); gap:26px; margin-top:9%; }} .metric {{ border-left:6px solid {d.primary_color}; padding:12px 20px; min-height:220px; }} .metric span {{ color:{d.primary_color}; font-weight:800; font-size:13px; }} .metric-value {{ display:block; color:{d.accent_color}; font-family:{d.font_heading}; font-size:clamp(26px,3vw,44px); line-height:1; margin:15px 0 8px; }} .metric h3 {{ font-size:clamp(18px,1.9vw,28px); margin:24px 0 14px; }} .metric-value+h3 {{ margin:0 0 14px; }} .metric p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); line-height:1.4; }}
       .native-chart-preview {{ margin:8% 3% 0; height:52%; border-bottom:1px solid {d.primary_color}; }} .native-chart-preview>strong {{ color:{d.text_secondary}; font-size:13px; }} .chart-bars {{ height:82%; display:flex; align-items:end; justify-content:space-around; gap:8%; padding-top:5%; }} .chart-bar {{ height:100%; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:end; gap:5px; }} .chart-bar span {{ display:block; width:54%; background:{d.primary_color}; border-radius:6px 6px 0 0; }} .chart-bar small {{ color:{d.text_secondary}; text-align:center; }} .chart-bar b {{ color:{d.text_primary}; font-size:12px; }}
+      .data-table {{ width:88%; margin:7% auto 0; border-collapse:collapse; table-layout:fixed; font-size:clamp(10px,1vw,15px); color:{d.text_primary}; }} .data-table th,.data-table td {{ border:1px solid {d.primary_color}; padding:11px 10px; text-align:left; overflow-wrap:anywhere; line-height:1.22; }} .data-table th {{ background:{d.primary_color}; color:{d.background_color}; font-weight:800; }} .data-table td {{ background:{d.surface_color}; }} .data-table tr:nth-child(even) td {{ background:{mix(d.surface_color,d.background_color,.32)}; }}
       .asymmetric {{ display:grid; grid-template-columns:.88fr 1.12fr; gap:42px; margin-top:9%; align-items:center; }} .asymmetric>strong {{ font-family:{d.font_heading}; font-size:clamp(23px,2.7vw,39px); line-height:1.05; }} .support {{ padding:17px 20px; margin-bottom:15px; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); border:1px solid {d.primary_color}; box-shadow:8px 10px 22px rgba(0,0,0,.38); }} .support h3 {{ color:{d.primary_color}; font-size:clamp(16px,1.5vw,21px); margin-bottom:7px; }} .support p {{ color:{d.text_secondary}; font-size:clamp(12px,1.1vw,16px); }}
-      .process-stages {{ display:grid; grid-template-columns:repeat({min(4,max(1,len(slide.elements[:4])))},1fr); gap:24px; margin-top:8%; }} .process-stage {{ min-width:0; min-height:310px; position:relative; padding:24px 20px; text-align:center; border:1px solid {d.primary_color}; border-top:7px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); box-shadow:7px 9px 18px rgba(0,0,0,.2); }} .process-stage:not(:last-child):after {{ content:'›'; position:absolute; right:-18px; top:43%; z-index:2; color:{d.primary_color}; font-size:32px; font-weight:800; }} .process-stage span {{ display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:11px; font-weight:800; }} .process-stage h3 {{ margin:31px 0 20px; color:{d.text_primary}; font-size:clamp(14px,1.4vw,20px); }} .process-stage p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,14px); line-height:1.35; }}
-      .standard-flow {{ display:grid; grid-template-columns:repeat({min(4,max(1,len(slide.elements[:4])))},1fr); gap:18px; margin-top:8%; }} .standard-flow-stage {{ min-height:310px; position:relative; padding:24px 20px; border:1px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); text-align:center; box-shadow:7px 9px 18px rgba(0,0,0,.2); }} .standard-flow-stage:not(:last-child):after {{ content:'›'; position:absolute; right:-17px; top:43%; z-index:2; color:{d.primary_color}; font-size:30px; font-weight:800; }} .standard-flow-stage span {{ display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:11px; font-weight:800; }} .standard-flow-stage h3 {{ margin:31px 0 20px; font-size:clamp(14px,1.4vw,20px); }} .standard-flow-stage p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,14px); line-height:1.35; }}
+      .process-stages {{ display:grid; grid-template-columns:repeat({min(5,max(1,len(slide.elements[:5])))},1fr); gap:clamp(8px,1.5vw,24px); margin-top:8%; }} .process-stage {{ min-width:0; min-height:310px; position:relative; padding:24px 20px; text-align:center; border:1px solid {d.primary_color}; border-top:7px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); box-shadow:7px 9px 18px rgba(0,0,0,.2); }} .process-stage:not(:last-child):after {{ content:'›'; position:absolute; right:-18px; top:43%; z-index:2; color:{d.primary_color}; font-size:32px; font-weight:800; }} .process-stage span {{ display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:11px; font-weight:800; }} .process-stage h3 {{ margin:31px 0 20px; color:{d.text_primary}; font-size:clamp(13px,1.25vw,20px); }} .process-stage p {{ color:{d.text_secondary}; font-size:clamp(10px,.9vw,14px); line-height:1.35; }}
+      .standard-flow {{ display:grid; grid-template-columns:repeat({min(5,max(1,len(slide.elements[:5])))},1fr); gap:clamp(8px,1.2vw,18px); margin-top:8%; }} .standard-flow-stage {{ min-height:310px; position:relative; padding:24px 20px; border:1px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); text-align:center; box-shadow:7px 9px 18px rgba(0,0,0,.2); }} .standard-flow-stage:not(:last-child):after {{ content:'›'; position:absolute; right:-17px; top:43%; z-index:2; color:{d.primary_color}; font-size:30px; font-weight:800; }} .standard-flow-stage span {{ display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:11px; font-weight:800; }} .standard-flow-stage h3 {{ margin:31px 0 20px; font-size:clamp(13px,1.25vw,20px); }} .standard-flow-stage p {{ color:{d.text_secondary}; font-size:clamp(10px,.9vw,14px); line-height:1.35; }}
       .architecture-layers {{ display:grid; gap:12px; margin:7% auto 0; width:86%; }} .architecture-layer {{ min-height:78px; padding:14px 24px; border:1px solid {d.primary_color}; border-radius:10px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); }} .architecture-layer:nth-child(2) {{ margin:0 3%; }} .architecture-layer:nth-child(3) {{ margin:0 6%; }} .architecture-layer:nth-child(4) {{ margin:0 9%; }} .architecture-layer h3 {{ color:{d.primary_color}; font-size:clamp(15px,1.55vw,22px); margin-bottom:7px; }} .architecture-layer p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); line-height:1.32; }}
       .cycle {{ position:relative; width:58%; aspect-ratio:1.45; margin:5% auto 0; }} .cycle>strong,.cycle-node {{ position:absolute; display:grid; place-items:center; text-align:center; border:1px solid {d.primary_color}; border-radius:50%; }} .cycle>strong {{ inset:31% 32%; padding:10px; background:{d.surface_color}; font-size:clamp(12px,1.2vw,17px); }} .cycle-node {{ width:30%; aspect-ratio:1; padding:10px; background:{d.surface_color}; }} .cycle-node h3 {{ font-size:clamp(12px,1.2vw,17px); color:{d.text_primary}; }} .node-1 {{ left:35%; top:0; }} .node-2 {{ right:0; top:35%; }} .node-3 {{ left:0; top:35%; }} .node-4 {{ left:35%; bottom:0; }}
       .iso-stack {{ width:68%; margin:10% auto 0; }} .iso-layer {{ transform:skewX(-16deg); border:1px solid {d.primary_color}; background:{d.surface_color}; padding:15px 32px; margin-top:-2px; }} .iso-layer>* {{ transform:skewX(16deg); }} .iso-layer h3 {{ font-size:clamp(15px,1.5vw,22px); }} .iso-layer p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); }}

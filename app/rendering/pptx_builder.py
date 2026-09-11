@@ -158,7 +158,7 @@ def bullet_points(element: SlideElement, limit: int = 3) -> list[str]:
     chunks=re.split(r"\n+|\s*[•▪]\s*", raw)
     points=[clean_copy(point) for point in chunks if clean_copy(point)]
     if len(points)<2:
-        points=[clean_copy(point) for point in re.split(r"(?<=[.!?])\s+", raw) if clean_copy(point)]
+        points=[clean_copy(point) for point in re.split(r"(?<=[.!?])\s*", raw) if clean_copy(point)]
     return [point[:115].rsplit(" ",1)[0] if len(point)>115 else point for point in points[:limit]]
 
 def add_bullets(slide, points: list[str], x, y, w, h, d):
@@ -229,7 +229,14 @@ def card(slide, element, x, y, w, h, d, index: int, emphasis=False):
         add_text(slide, body, x+.24, body_y, w-.48, h-(body_y-y)-.20, text_size(body, 16, w-.48), d.text_secondary, font=d.font_body)
 
 def grid_cards(slide, spec, d):
-    elements=spec.elements[:6]; count=len(elements)
+    elements=spec.elements[:6]
+    # A provider may temporarily return no items while an explicit brief asks
+    # it to draft them.  A blank, broken slide is never acceptable; render a
+    # single bounded insight rather than dividing by zero or exposing private
+    # instruction text.
+    if not elements:
+        elements=[SlideElement(heading="Key insight", body=clean_copy(spec.purpose))]
+    count=len(elements)
     columns=2 if count in (2,4,6) else min(3,max(1,count)); rows=(count+columns-1)//columns
     gap=.24; total_w=W-2*MARGIN; card_w=(total_w-gap*(columns-1))/columns
     max_available=(4.62-gap*(rows-1))/rows
@@ -244,9 +251,23 @@ def grid_cards(slide, spec, d):
         col,row=i%columns,i//columns
         card(slide,item,MARGIN+col*(card_w+gap),CONTENT_Y+row*(card_h+gap),card_w,card_h,d,i,emphasis=i==0)
 
+def contact_matrix(slide, spec, d):
+    """Use the full canvas for operational contact data with uneven lengths."""
+    items=spec.elements[:6] or [SlideElement(heading="On-call escalation", body=clean_copy(spec.purpose))]
+    count=len(items); columns=4 if count <= 4 else 3; rows=(count+columns-1)//columns
+    gap=.22; width=(W-2*MARGIN-gap*(columns-1))/columns; height=(3.90-gap*(rows-1))/rows
+    for index,item in enumerate(items):
+        column=index%columns; row=index//columns
+        x=MARGIN+column*(width+gap); y=2.18+row*(height+gap)
+        add_surface(slide,x,y,width,height,d,emphasis=index==0)
+        add_text(slide,f"{index+1:02d}",x+.20,y+.20,width-.40,.18,10,d.primary_color,True)
+        heading=item.heading or item.label or "Escalation contact"
+        add_text(slide,heading,x+.20,y+.56,width-.40,.58,text_size(heading,17,width-.40),d.text_primary,True,font=d.font_heading)
+        add_text(slide,element_text(item),x+.20,y+1.24,width-.40,height-1.42,text_size(element_text(item),13,width-.40),d.text_secondary)
+
 def workflow(slide, spec, d):
     """Connected flow stages with all copy contained in each stage surface."""
-    items=spec.elements[:4]; n=max(1,len(items)); gap=.28; width=(W-2*MARGIN-gap*(n-1))/n
+    items=spec.elements[:5]; n=max(1,len(items)); gap=.20 if n >= 5 else .28; width=(W-2*MARGIN-gap*(n-1))/n
     stage_y,stage_h=2.18,3.52
     for i, item in enumerate(items):
         x=MARGIN+i*(width+gap)
@@ -255,8 +276,10 @@ def workflow(slide, spec, d):
         add_text(slide,f"{i+1:02d}",x+.24,stage_y+.39,.46,.14,9,d.background_color,True,align=PP_ALIGN.CENTER)
         if i<n-1:
             connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+width+.03), Inches(stage_y+stage_h/2), Inches(x+width+gap-.03), Inches(stage_y+stage_h/2)); connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.5)
-        add_text(slide,item.heading or f"Step {i+1}",x+.24,stage_y+.95,width-.48,.72,text_size(item.heading or "",20,width-.48),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        add_text(slide,element_text(item),x+.26,stage_y+1.94,width-.52,1.10,text_size(element_text(item),15,width-.52),d.text_secondary,align=PP_ALIGN.CENTER)
+        heading_size=16 if n >= 5 else 20
+        body_size=12 if n >= 5 else 15
+        add_text(slide,item.heading or f"Step {i+1}",x+.18,stage_y+.95,width-.36,.78,text_size(item.heading or "",heading_size,width-.36),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.20,stage_y+1.94,width-.40,1.20,text_size(element_text(item),body_size,width-.40),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
     """A compact, connected process composition for an explicit workflow.
@@ -266,7 +289,7 @@ def chevron_flow(slide, spec, d):
     Keep the *flow* signal in small native arrow connectors and let every
     stage use a rectangular, readable text surface instead.
     """
-    items=spec.elements[:4]; count=max(1,len(items)); gap=.34; width=(W-2*MARGIN-gap*(count-1))/count
+    items=spec.elements[:5]; count=max(1,len(items)); gap=.20 if count >= 5 else .34; width=(W-2*MARGIN-gap*(count-1))/count
     stage_y,stage_h=2.25,3.42
     for index,item in enumerate(items):
         x=MARGIN+index*(width+gap)
@@ -276,8 +299,10 @@ def chevron_flow(slide, spec, d):
         add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,stage_y,width,.10,d.primary_color,d.primary_color)
         add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+.26,stage_y+.28,.46,.46,d.primary_color,d.primary_color)
         add_text(slide,f"{index+1:02d}",x+.26,stage_y+.42,.46,.13,9,d.background_color,True,align=PP_ALIGN.CENTER)
-        add_text(slide,item.heading or f"Step {index+1}",x+.25,stage_y+1.02,width-.50,.68,text_size(item.heading or "",20,width-.50),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        add_text(slide,element_text(item),x+.30,stage_y+2.02,width-.60,1.02,text_size(element_text(item),15,width-.60),d.text_secondary,align=PP_ALIGN.CENTER)
+        heading_size=16 if count >= 5 else 20
+        body_size=12 if count >= 5 else 15
+        add_text(slide,item.heading or f"Step {index+1}",x+.18,stage_y+1.02,width-.36,.74,text_size(item.heading or "",heading_size,width-.36),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.22,stage_y+2.02,width-.44,1.10,text_size(element_text(item),body_size,width-.44),d.text_secondary,align=PP_ALIGN.CENTER)
         if index<count-1:
             arrow=add_shape(slide,MSO_AUTO_SHAPE_TYPE.RIGHT_ARROW,x+width+.04,stage_y+stage_h/2-.16,gap-.08,.32,d.primary_color,d.primary_color)
             arrow.line.transparency=100
@@ -330,7 +355,10 @@ def architecture(slide, spec, d):
         y=2.02+i*(layer_h+gap); inset=.28*i; x=MARGIN+inset; width=11.8-2*inset
         add_surface(slide,x,y,width,layer_h,d,emphasis=i==0)
         add_text(slide,item.heading or f"Layer {i+1}",x+.30,y+.18,width-.60,.30,text_size(item.heading or "",19,width-.60),d.primary_color,True,font=d.font_heading)
-        add_text(slide,element_text(item),x+.32,y+.60,width-.64,layer_h-.76,text_size(element_text(item),15,width-.64),d.text_secondary)
+        if spec.visual_spec.get("nested_bullets"):
+            add_bullets(slide,bullet_points(item,2),x+.36,y+.56,width-.72,layer_h-.70,d)
+        else:
+            add_text(slide,element_text(item),x+.32,y+.60,width-.64,layer_h-.76,text_size(element_text(item),15,width-.64),d.text_secondary)
 
 def title_slide(slide, spec, d):
     dynamic_path=spec.visual_spec.get("image_path")
@@ -390,13 +418,26 @@ def summary(slide, spec, d):
         add_text(slide,element_text(item),4.86,y+.48,7.2,.45,16,d.text_secondary)
 
 def comparison_rows(slide, spec, d):
-    add_text(slide,"DECISION LENSES",MARGIN,1.70,3.0,.20,11,d.primary_color,True)
-    for index,item in enumerate(spec.elements[:3]):
-        y=CONTENT_Y+index*1.22
-        add_surface(slide,MARGIN,y,11.82,.94,d,emphasis=index==0)
+    if spec.visual_spec.get("variable_rows"):
+        items=spec.elements[:4]
+        count=max(1,len(items)); gap=.16; row_h=(4.18-gap*(count-1))/count
+        for index,item in enumerate(items):
+            y=1.92+index*(row_h+gap)
+            add_surface(slide,MARGIN,y,11.82,row_h,d,emphasis=index==0)
+            add_text(slide,f"{index+1:02d}",MARGIN+.26,y+.28,.36,.16,10,d.primary_color,True)
+            heading=item.heading or f"Node {index+1}"
+            add_text(slide,heading,MARGIN+.86,y+.20,6.65,row_h-.36,text_size(heading,19,6.65),d.text_primary,True,font=d.font_heading)
+            detail=element_text(item)
+            if detail:
+                add_text(slide,detail,MARGIN+7.72,y+.22,3.68,row_h-.38,text_size(detail,14,3.68),d.text_secondary)
+        return
+    items=spec.elements[:4]; count=max(1,len(items)); row_h=1.00 if count >= 4 else .94; gap=.15 if count >= 4 else .28
+    for index,item in enumerate(items):
+        y=CONTENT_Y+index*(row_h+gap)
+        add_surface(slide,MARGIN,y,11.82,row_h,d,emphasis=index==0)
         add_text(slide,f"{index+1:02d}",MARGIN+.26,y+.32,.36,.16,10,d.primary_color,True)
-        add_text(slide,item.heading or "Decision lens",MARGIN+.92,y+.21,3.3,.28,20,d.text_primary,True,font=d.font_heading)
-        add_text(slide,element_text(item),MARGIN+4.25,y+.23,6.9,.32,16,d.text_secondary)
+        add_text(slide,item.heading or "Decision lens",MARGIN+.92,y+.20,4.1,.42,text_size(item.heading or "",18,4.1),d.text_primary,True,font=d.font_heading)
+        add_text(slide,element_text(item),MARGIN+5.15,y+.23,5.98,.40,15,d.text_secondary)
 
 def evidence_strip(slide, spec, d):
     items=spec.elements[:3]; count=max(1,len(items)); gap=.38; width=(W-2*MARGIN-gap*(count-1))/count
@@ -404,6 +445,21 @@ def evidence_strip(slide, spec, d):
         x=MARGIN+index*(width+gap)
         add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,CONTENT_Y,.08,3.62,d.primary_color,d.primary_color)
         add_text(slide,f"0{index+1}",x+.28,CONTENT_Y+.12,width-.28,.24,12,d.primary_color,True)
+        if item.value:
+            # Explicit user-supplied figures are evidence, not supporting
+            # prose.  Give them the visual weight requested by a metrics
+            # slide and keep the label/body inside the same measured lane.
+            add_text(slide,str(item.value),x+.28,CONTENT_Y+.65,width-.38,.64,32,d.accent_color,True,font=d.font_heading)
+            add_text(slide,item.heading or "Metric",x+.28,CONTENT_Y+1.44,width-.38,.56,18,d.text_primary,True,font=d.font_heading)
+            supporting_copy=element_text(item)
+            # Last-line defence: raw provider output can bypass a previous
+            # QA pass during slide editing.  Never show a metric's numeric
+            # value or its label twice in the supporting-copy lane.
+            if supporting_copy.casefold() in {str(item.value).casefold(), (item.heading or "").casefold()}:
+                supporting_copy=""
+            if supporting_copy:
+                add_text(slide,supporting_copy,x+.28,CONTENT_Y+2.18,width-.38,1.05,15,d.text_secondary)
+            continue
         heading=item.heading or "Evidence"
         # A 26pt heading in a .65in box works for one line only.  Keynote
         # exposes that overflow rather than shrinking it, so allocate space
@@ -416,6 +472,52 @@ def evidence_strip(slide, spec, d):
         body_height=CONTENT_Y+3.62-body_y-.10
         add_text(slide,heading,x+.28,heading_y,width-.38,heading_height,text_size(heading,heading_size,width-.38),d.text_primary,True,font=d.font_heading)
         add_text(slide,element_text(item),x+.28,body_y,width-.38,body_height,16,d.text_secondary)
+
+def native_table(slide, spec, d) -> bool:
+    """Render explicit user data as an editable PowerPoint table.
+
+    A markdown-looking table in a prompt is data, not a request for card
+    copy.  Keeping it native makes it editable and guarantees headers/rows
+    share one coordinate system in PowerPoint, Keynote, and the web preview.
+    """
+    raw=spec.visual_spec.get("table_data")
+    if not isinstance(raw, dict):
+        return False
+    headers=raw.get("headers"); rows=raw.get("rows")
+    if not isinstance(headers, list) or not headers or not isinstance(rows, list) or not rows:
+        return False
+    if any(not isinstance(row, list) or len(row) != len(headers) for row in rows):
+        return False
+    frame=slide.shapes.add_table(len(rows)+1, len(headers), Inches(MARGIN), Inches(1.78), Inches(W-2*MARGIN), Inches(4.72))
+    table=frame.table
+    total_width=W-2*MARGIN
+    # Let the service-name and risk columns breathe, without allowing latency
+    # labels to shrink into unreadable slivers.
+    # Risk/decision text is human-readable prose, while latency is a compact
+    # numeric value.  Allocate width accordingly so a word such as
+    # "Priority" never leaves its final character on an orphan line.
+    weights=[1.35, .75, .75, 1.55] if len(headers)==4 else [1.0]*len(headers)
+    total_weight=sum(weights)
+    for index, weight in enumerate(weights):
+        table.columns[index].width=Inches(total_width*weight/total_weight)
+    header_height=.62; row_height=(4.72-header_height)/len(rows)
+    table.rows[0].height=Inches(header_height)
+    for index in range(1,len(rows)+1): table.rows[index].height=Inches(row_height)
+    for row_index, values in enumerate([headers,*rows]):
+        for column_index, value in enumerate(values):
+            cell=table.cell(row_index,column_index)
+            cell.fill.solid(); cell.fill.fore_color.rgb=rgb(d.primary_color if row_index == 0 else shade(d.surface_color, 5 if row_index % 2 else 0))
+            frame_text=cell.text_frame; frame_text.clear(); frame_text.word_wrap=True
+            frame_text.margin_left=frame_text.margin_right=Inches(.05)
+            frame_text.margin_top=frame_text.margin_bottom=Inches(.05)
+            frame_text.vertical_anchor=MSO_ANCHOR.MIDDLE
+            paragraph=frame_text.paragraphs[0]; paragraph.text=clean_copy(str(value)); paragraph.alignment=PP_ALIGN.LEFT
+            width=total_width*weights[column_index]/total_weight-.18
+            preferred=13 if row_index == 0 else (11 if len(paragraph.text) > 24 else 12)
+            paragraph.font.size=Pt(fitted_text_size(paragraph.text,preferred,width,row_height-.10,bold=row_index==0,minimum=9))
+            paragraph.font.bold=row_index==0; paragraph.font.name=d.font_body
+            paragraph.font.color.rgb=rgb(d.background_color if row_index == 0 else d.text_primary)
+    return True
 
 def validated_chart_data(spec) -> tuple[list[str], list[tuple[str, list[float]]], str] | None:
     """Accept only explicit, comparable user-supplied series for native charts."""
@@ -599,8 +701,10 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
             header(slide,spec_slide,d)
             layout=spec_slide.layout_type.value
             variant=spec_slide.visual_spec.get("visual_variant")
-            if native_chart(slide,spec_slide,d): pass
+            if native_table(slide,spec_slide,d): pass
+            elif native_chart(slide,spec_slide,d): pass
             elif spec_slide.visual_spec.get("image_path"): content_with_visual(slide,spec_slide,d)
+            elif spec_slide.visual_spec.get("contact_matrix"): contact_matrix(slide,spec_slide,d)
             elif variant=="cycle_loop": cycle_loop(slide,spec_slide,d)
             elif variant=="chevron_flow": chevron_flow(slide,spec_slide,d)
             elif variant=="isometric_stack": isometric_stack(slide,spec_slide,d)

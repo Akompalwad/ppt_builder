@@ -1,7 +1,7 @@
 import zipfile
 
 from app.schemas.presentation import CreatePresentationRequest
-from app.agents.orchestrator import PresentationOrchestrator, auto_theme_for_topic
+from app.agents.orchestrator import PresentationOrchestrator, auto_theme_for_topic, resolve_theme
 from app.agents.storyline_agent import StorylineAgent
 from app.agents.brief_agent import BriefInterpreterAgent
 from app.agents.slide_content_agent import SlideContentAgent
@@ -109,8 +109,97 @@ def test_prose_constraints_preserve_timeline_concepts_and_final_count():
     assert brief.constraint_for_slide(2).layout_type == LayoutType.timeline
     concepts=brief.constraint_for_slide(4)
     assert concepts.requirements == ["superposition", "entanglement", "qubits"]
+    assert concepts.story_stage == "concept foundations"
+    assert brief.constraint_for_slide(3).story_stage == "progress to present"
     final=brief.constraint_for_slide(7)
     assert final.layout_type == LayoutType.feature_grid and final.exact_element_count == 4
+    assert final.story_stage == "industry impact"
+
+def test_structured_stress_brief_keeps_native_table_and_five_step_roadmap(tmp_path):
+    prompt='''Create an intensive 6-slide deck. Slide 1: Title Slide. The title must be a long phrase: "Project Hyperion: Scaling Global Microservices Infrastructure". Slide 2: The Core Issue. Summarize this into 3 distinct detailed bullet points. Slide 3: System Component Comparison. Generate a 4x4 markdown table. Columns: [Service Name, Current Latency (ms), Target Latency (ms), Risk Level]. Row 1: [AuthGate API Gateway, 450ms, <15ms, Critical Risk / High Priority]. Row 2: [DataStream Ledger Sync, 1,200ms, <50ms, High Risk / Complex Migration]. Row 3: [NotifyEngine PubSub, 85ms, <10ms, Low Risk / Fast Win]. Slide 4: Migration Timeline. A horizontal 5-step engineering roadmap sequence. Step 1: Discovery & Audit, Step 2: Protocol Definition & RFC, Step 3: Canary Deployments in Sandbox, Step 4: Multi-Region Traffic Cutover, Step 5: Legacy Decommissioning & Cleanup. Slide 5: Critical Metrics. Display 3 distinct large percentage metrics side-by-side: 99.999% (Label: Targeted Uptime SLA), -85% (Label: Reduction in P99 API Latency), and $4.2M (Label: Projected Annual Savings). Slide 6: Emergency Contacts. Include an On-Call Matrix with varying contact lengths.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=6)
+    assert len(brief.slides) == 6
+    assert brief.by_number(1).title.startswith("Project Hyperion")
+    table_slide=brief.by_number(3)
+    assert table_slide.table_data["headers"] == ["Service Name", "Current Latency (ms)", "Target Latency (ms)", "Risk Level"]
+    assert table_slide.table_data["rows"][1][1] == "1,200ms"
+    roadmap=brief.by_number(4)
+    assert roadmap.exact_element_count == 5 and len(roadmap.requirements) == 5
+    metrics=brief.by_number(5)
+    assert [item.value for item in metrics.elements] == ["99.999%", "-85%", "$4.2M"]
+    spec=PresentationSpec(title="Project Hyperion", topic="Project Hyperion", slides=[item.seed() for item in brief.slides])
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert len(spec.slides[3].elements) == 5
+    output=build_presentation(spec,tmp_path/"stress.pptx")
+    rendered=Presentation(output)
+    assert len(rendered.slides[2].shapes) > 3
+    assert any(getattr(shape, "has_table", False) for shape in rendered.slides[2].shapes)
+
+def test_metric_echoes_and_dangling_sentence_are_removed():
+    spec=PresentationSpec(title="Metrics", topic="Metrics", slides=[
+        SlideSpec(slide_number=1, title="Roadmap", purpose="Show the roadmap.", layout_type=LayoutType.step_workflow,
+                  elements=[{"heading":"Cleanup", "body":"Final shutdown of old infrastructure and removal of redundant code paths to optimize."}]),
+        SlideSpec(slide_number=2, title="Metrics", purpose="Show the metrics.", layout_type=LayoutType.key_metrics,
+                  elements=[{"heading":"Targeted Uptime SLA", "value":"99.999%", "body":"Targeted Uptime SLA"}, {"heading":"Latency reduction", "value":"-85%", "body":"-85%"}]),
+    ])
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert spec.slides[0].elements[0].body.endswith("code paths.")
+    assert all(not item.body for item in spec.slides[1].elements)
+    assert summarize_point("Higher Conversion Rates vs. Standard Web", 8) == "Higher Conversion Rates versus Standard Web"
+
+def test_metric_renderer_never_draws_duplicate_value_body(tmp_path):
+    spec=PresentationSpec(title="Metrics", topic="Metrics", slides=[SlideSpec(
+        slide_number=1, title="Growth", purpose="Growth evidence.", layout_type=LayoutType.key_metrics,
+        elements=[{"heading":"Higher Conversion Rates vs. Standard Web", "value":"3.8x", "body":"3.8x"}],
+    )])
+    output=build_presentation(spec,tmp_path/"metrics-no-echo.pptx")
+    texts=[shape.text for shape in Presentation(output).slides[0].shapes if getattr(shape,"has_text_frame",False)]
+    assert texts.count("3.8x") == 1
+
+def test_explicit_metric_contract_cannot_be_overwritten_with_an_echo_value():
+    brief=BriefInterpreterAgent().interpret(
+        'Slide 1: Critical Metrics\nLayout: Key Metrics\nDisplay metrics: 99.999% (Label: Targeted Uptime SLA).', 3
+    )
+    directive=brief.by_number(1)
+    preserved=SlideContentAgent._preserve_contract_elements(directive, {
+        "elements":[{"heading":"Targeted Uptime SLA", "value":"99.999%", "body":"99.999%"}]
+    })
+    assert preserved[0]["value"] == "99.999%"
+    assert preserved[0]["heading"] == "Targeted Uptime SLA"
+    assert not preserved[0]["body"]
+
+def test_slide_content_prompts_do_not_repeat_other_slide_contracts(monkeypatch):
+    prompt='''Create a 3-slide deck titled "Scoped prompts".
+Slide 1: Cover
+Title: Opening signal
+Slide 2: Private marker
+Layout: Feature Grid
+Topic Areas: NEVER-SEND-THIS-TO-SLIDE-ONE
+Slide 3: Closing decision
+Layout: Summary'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=3)
+    sent=[]
+
+    class FakeGateway:
+        def generate_json(self, payload, **_kwargs):
+            sent.append(payload)
+            return {
+                "title":"Generated slide", "subtitle":None, "layout_type":"feature_grid",
+                "purpose":"A complete, audience-facing insight.", "elements":[], "visual_spec":{},
+            }
+
+    monkeypatch.setattr(
+        "app.agents.slide_content_agent.LLMGateway.from_settings",
+        lambda *_args, **_kwargs: FakeGateway(),
+    )
+    SlideContentAgent().generate(
+        CreatePresentationRequest(topic=prompt, slide_count=3), "Cyber Dark", StorylineAgent(),
+        provider="gemini", brief=brief,
+    )
+    assert len(sent) == 3
+    assert "NEVER-SEND-THIS-TO-SLIDE-ONE" not in sent[0]
+    assert "NEVER-SEND-THIS-TO-SLIDE-ONE" in sent[1]
+    assert "Slide 2: Private marker" not in sent[0]
 
 def test_portable_gradient_background_and_long_metric_copy(tmp_path):
     spec=PresentationSpec(
@@ -170,6 +259,55 @@ def test_storyline_uses_distinct_security_and_investor_arcs():
 def test_auto_theme_is_topic_aware():
     assert auto_theme_for_topic("SOC incident response automation").name == "Security Signal"
     assert auto_theme_for_topic("NSDL versus CDSL investor choice").name == "Investor Slate"
+
+def test_explicit_light_brand_prompt_overrides_auto_topic_theme():
+    theme=resolve_theme(
+        "Auto",
+        "Use a clean Light Theme with an off-white background. Do not use dark backgrounds. Brand colors are Deep Navy Blue, Warm Coral/Terracotta, and Charcoal Gray.",
+    )
+    assert theme.name == "Luxury Light Brand"
+    assert theme.background_color == "#FBF7F1"
+    assert theme.header_color == "#102A43"
+    assert theme.accent_color == "#C96B5A"
+    assert theme.font_heading == "Georgia"
+
+def test_light_brand_brief_keeps_deck_title_quoted_metrics_and_split_layout():
+    prompt='''Create a 5-slide presentation titled "The Future of Luxury Retail: Spatial Commerce & AR". Use a Light Theme; do not use dark backgrounds. Slide 1: Title Slide. Slide 2: Market Shift. Create a split-screen 2-column layout. Slide 3: Growth Projections. Metrics: "+142%" (Label: Increase in Customer Dwell Time), "$12B" (Label: AR Retail Market Value by 2028), and "3.8x" (Label: Higher Conversion Rates vs. Standard Web). Slide 4: Pillars. Slide 5: Partnerships. Display 4 separate items.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=5)
+    assert brief.by_number(1).title == "The Future of Luxury Retail: Spatial Commerce & AR"
+    assert brief.by_number(2).layout_type == LayoutType.two_column
+    metrics=brief.by_number(3)
+    assert metrics.layout_type == LayoutType.key_metrics
+    assert [item.value for item in metrics.elements] == ["+142%", "$12B", "3.8x"]
+
+def test_dense_devops_brief_preserves_tiers_nodes_and_quadrant_count():
+    prompt='''Create a 5-slide deck titled "DevOps". Slide 1: Title Slide. Main Title: "Next-Generation DevOps: Enterprise CI/CD". Slide 2: Core Architecture. Create 3 main architectural tiers with nested sub-bullets:Automated Build & Compilation LayerTriggered by webhook events from Version Control Systems.Executes builds in Kubernetes pods.Distributed Continuous Testing MatrixParallel test execution dynamically.Progressive Deployment EngineCanary releases with rollback triggers.Slide 3: Variable Data Rows. Node A: Build. (Extremely short)Node B: Code Quality Scan. (Medium)Node C: Multi-Region Distributed Compliance Verification Module. (Extremely long phrase)Node D: Deploy. (Extremely short)Slide 4: Pillars. A vertical list with 3 pillars. Slide 5: Recovery. Display a 2x2 grid representing failover clusters.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=5)
+    assert brief.by_number(1).title == "Next-Generation DevOps: Enterprise CI/CD"
+    tiers=brief.by_number(2)
+    assert tiers.layout_type == LayoutType.architecture_layers and tiers.nested_bullets and len(tiers.elements) == 3
+    assert "Triggered by webhook events" in tiers.elements[0].body
+    assert "Executes builds in Kubernetes pods" in tiers.elements[0].body
+    nodes=brief.by_number(3)
+    assert nodes.layout_type == LayoutType.comparison and nodes.variable_rows and len(nodes.elements) == 4
+    assert nodes.elements[1].heading == "NODE B: Code Quality Scan"
+    assert not nodes.elements[2].body
+    assert brief.by_number(4).exact_element_count == 3
+    assert brief.by_number(5).exact_element_count == 4
+
+def test_qa_preserves_explicit_long_title_and_nested_source_copy(tmp_path):
+    brief=BriefInterpreterAgent().interpret(
+        '''Create a 3-slide deck titled "Pipeline". Slide 1: Title Slide. Main Title: "Next-Generation DevOps: Architecting Scalable, Zero-Downtime CI/CD Pipelines for Enterprise Infrastructure v3.0". Slide 2: Architecture. Create 3 main architectural tiers with nested sub-bullets:Automated Build LayerTriggered by webhooks.Executes isolated builds.Distributed Testing MatrixRuns tests in parallel.Progressive Deployment EngineCanary releases with rollback. Slide 3: Close.''',
+        3,
+    )
+    spec=PresentationSpec(title="Pipeline", topic="Pipeline", slides=[item.seed() for item in brief.slides])
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert spec.slides[0].title.endswith("Infrastructure v3.0")
+    assert "Triggered by webhooks." in spec.slides[1].elements[0].body
+    assert "Executes isolated builds." in spec.slides[1].elements[0].body
+    output=build_presentation(spec, tmp_path/"nested-source-copy.pptx")
+    rendered_text=[shape.text for shape in Presentation(output).slides[1].shapes if getattr(shape, "has_text_frame", False)]
+    assert any("Triggered by webhooks." in text and "Executes isolated builds." in text for text in rendered_text)
 
 def test_minimalist_and_corporate_themes_are_visually_distinct():
     from app.agents.orchestrator import THEMES

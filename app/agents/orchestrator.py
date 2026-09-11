@@ -20,9 +20,36 @@ THEMES={
  "Aurora Tech": DesignSystem(name="Aurora Tech",background_color="#101024",surface_color="#20213C",primary_color="#A78BFA",secondary_color="#3B82F6",accent_color="#F6C945",header_color="#F4F0FF",text_primary="#FAF9FF",text_secondary="#C7C5E1",muted_text="#9390B5"),
 }
 
+def explicit_brand_theme(prompt: str) -> DesignSystem | None:
+    """Resolve non-negotiable palette language before topic-based theming.
+
+    Theme selection used to consider only the subject matter.  That works for
+    an open-ended prompt, but it must never override a stated brand system.
+    The tokens below are readable, portable named-colour equivalents; the
+    same resolver also supports a future explicit-hex parser without asking an
+    LLM to alter renderer styling.
+    """
+    text=(prompt or "").lower()
+    light_request=any(phrase in text for phrase in (
+        "do not use dark backgrounds", "light theme", "light background",
+        "off-white", "soft cream", "light beige",
+    ))
+    luxury_palette=all(phrase in text for phrase in ("deep navy", "coral", "charcoal"))
+    if light_request and luxury_palette:
+        return DesignSystem(
+            name="Luxury Light Brand", background_color="#FBF7F1", surface_color="#FFFDF9",
+            primary_color="#C96B5A", secondary_color="#D9A194", accent_color="#C96B5A",
+            header_color="#102A43", text_primary="#102A43", text_secondary="#353535",
+            muted_text="#756D66", font_heading="Georgia", font_body="Arial",
+            card_style="flat", shadow_style="none",
+        )
+    return None
+
 def auto_theme_for_topic(topic: str) -> DesignSystem:
     """Choose a coherent but topic-appropriate visual system for Auto."""
     text=topic.lower()
+    if brand:=explicit_brand_theme(topic):
+        return brand
     if any(word in text for word in ("threat", "security", "soc", "incident", "vulnerability", "attack")):
         return THEMES["Security Signal"]
     if any(word in text for word in ("investment", "depository", "nsdl", "cdsl", "portfolio", "wealth", "stock", "share", "fund")):

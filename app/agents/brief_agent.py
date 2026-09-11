@@ -37,6 +37,12 @@ class BriefSlide(BaseModel):
     requirements: list[str] = Field(default_factory=list)
     elements: list[SlideElement] = Field(default_factory=list)
     chart_data: dict | None = None
+    table_data: dict | None = None
+    exact_element_count: int | None = None
+    content_instruction: str | None = None
+    contact_matrix: bool = False
+    nested_bullets: bool = False
+    variable_rows: bool = False
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -50,8 +56,16 @@ class BriefSlide(BaseModel):
         return SlideSpec(
             slide_number=self.slide_number, title=self.title, subtitle=self.subtitle,
             purpose=purpose, layout_type=self.layout_type, elements=elements,
-            visual_spec={"brief_locked": True, "brief_requirements": self.requirements, **({"chart_data":self.chart_data} if self.chart_data else {})},
-            metadata={"brief_layout_locked": True},
+            visual_spec={
+                "brief_locked": True, "brief_requirements": self.requirements,
+                **({"chart_data":self.chart_data} if self.chart_data else {}),
+                **({"table_data":self.table_data} if self.table_data else {}),
+                **({"content_instruction":self.content_instruction} if self.content_instruction else {}),
+                **({"contact_matrix":True} if self.contact_matrix else {}),
+                **({"nested_bullets":True} if self.nested_bullets else {}),
+                **({"variable_rows":True} if self.variable_rows else {}),
+            },
+            metadata={"brief_layout_locked": True, "requested_element_count":self.exact_element_count},
         )
 
 class SlideConstraint(BaseModel):
@@ -60,6 +74,9 @@ class SlideConstraint(BaseModel):
     layout_type: LayoutType | None = None
     requirements: list[str] = Field(default_factory=list)
     exact_element_count: int | None = None
+    story_stage: str | None = None
+    story_intent: str | None = None
+    preferred_recipe: str | None = None
 
 
 class PresentationBrief(BaseModel):
@@ -76,7 +93,20 @@ class PresentationBrief(BaseModel):
         return next((slide for slide in self.slides if slide.slide_number == number), None)
 
     def constraint_for_slide(self, number: int) -> SlideConstraint | None:
-        return next((constraint for constraint in self.constraints if constraint.slide_number == number), None)
+        matches=[constraint for constraint in self.constraints if constraint.slide_number == number]
+        if not matches:
+            return None
+        # A prose brief can independently specify a layout, named content, and
+        # a narrative role for the same slide. Merge those partial contracts.
+        return SlideConstraint(
+            slide_number=number,
+            layout_type=next((item.layout_type for item in matches if item.layout_type), None),
+            requirements=[requirement for item in matches for requirement in item.requirements],
+            exact_element_count=next((item.exact_element_count for item in matches if item.exact_element_count is not None), None),
+            story_stage=next((item.story_stage for item in matches if item.story_stage), None),
+            story_intent=next((item.story_intent for item in matches if item.story_intent), None),
+            preferred_recipe=next((item.preferred_recipe for item in matches if item.preferred_recipe), None),
+        )
 
 
 class PromptClassification(BaseModel):
@@ -100,7 +130,10 @@ class BriefInterpreterAgent:
 
     def classify(self, prompt: str) -> PromptClassification:
         normalized=self._normalize_markdown(prompt)
-        numbers=[int(number) for number in re.findall(r"(?im)^\s*slide\s+(\d+)\s*:", normalized)]
+        # Prompts pasted from chat often place all contracts in one long
+        # paragraph.  A word boundary recognises both that form and normal
+        # Markdown line breaks.
+        numbers=[int(number) for number in re.findall(r"(?i)\bslide\s+(\d+)\s*:", normalized)]
         fields=re.findall(r"(?im)^\s*(?:title|subtitle|layout|topic areas|steps to cover|tiers to cover|key outcomes)\s*:", normalized)
         if '"slides"' in prompt and '"slide_number"' in prompt:
             return PromptClassification(
@@ -167,6 +200,110 @@ class BriefInterpreterAgent:
         lines=([first] if first else []) + [re.sub(r"^\d+[.)]\s*", "", line.strip(" -•\t")) for line in tail.splitlines() if line.strip()]
         return [line for line in lines if line and not line.lower().startswith(("ensure ", "please "))]
 
+    @staticmethod
+    def _bracket_values(value: str) -> list[str]:
+        """Read a user-authored ``[a, b, c]`` row without treating it as prose."""
+        values=[item.strip().strip('"') for item in value.split(",") if item.strip()]
+        # Markdown-style table rows often contain a formatted number such as
+        # ``1,200ms`` without CSV quoting.  Stitch that one value back
+        # together so it stays in its intended cell.
+        index=0
+        while index+1 < len(values):
+            if re.fullmatch(r"\d{1,3}", values[index]) and re.match(r"\d{3}(?:\.\d+)?(?:ms|s|%|k|m|b)?\b", values[index+1], re.I):
+                values[index:index+2]=[values[index]+","+values[index+1]]
+            else:
+                index+=1
+        return values
+
+    def _structured_slide_details(self, section: str, number: int) -> dict:
+        """Extract hard layout/data contracts from a numbered free-form section.
+
+        This intentionally understands simple human-written patterns, rather
+        than requiring the user to provide JSON.  It gives tables and long
+        roadmaps their own semantic payload before any LLM is called.
+        """
+        result: dict={"requirements":[], "elements":[], "table_data":None,
+                      "exact_element_count":None, "content_instruction":None, "contact_matrix":False,
+                      "nested_bullets":False, "variable_rows":False}
+        # Three-tier architecture briefs are often pasted without line breaks.
+        # Detect named Layer/Matrix/Engine headings at sentence boundaries and
+        # preserve their following sentences as nested bullet content.
+        tier_count=re.search(r"\b(\d+)\s+main\s+architectural\s+tiers?\b", section, re.I)
+        if tier_count:
+            normalized=re.sub(r"(?<=[a-z])(?=[A-Z])", " ", section)
+            matches=list(re.finditer(r"(?:^|[.!:]\s*)([A-Z][A-Za-z0-9 &/-]+?(?:Layer|Matrix|Engine))\b", normalized))
+            tiers=[]
+            for index, match in enumerate(matches[:int(tier_count.group(1))]):
+                detail=normalized[match.end():matches[index+1].start() if index+1 < len(matches) else len(normalized)]
+                detail=re.sub(r"(?<=[.!?])(?=[A-Z])", " ", detail)
+                detail=re.sub(r"\s+", " ", detail).strip()
+                if detail and detail[-1] not in ".!?":
+                    detail += "."
+                if match.group(1).strip():
+                    tiers.append(SlideElement(type="tier", heading=match.group(1).strip(), body=detail))
+            if len(tiers)==int(tier_count.group(1)):
+                result["elements"]=tiers
+                result["exact_element_count"]=len(tiers)
+                result["nested_bullets"]=True
+                result["content_instruction"]="Render each architectural tier with its own heading and two indented technical sub-bullets. Preserve the tier order."
+                return result
+
+        nodes=re.findall(r"\b(Node\s+[A-Z])\s*:\s*([^.(]+)\.\s*\(([^)]+)\)", section, re.I)
+        if nodes:
+            # Parenthetical phrases such as "(Extremely long phrase)" are
+            # layout-test annotations, never visible slide copy.  Keep the
+            # requested node label intact and let the model add a concise,
+            # grounded explanation when one is useful.
+            result["elements"]=[SlideElement(type="row", heading=f"{node.upper()}: {label.strip()}", body="") for node,label,_note in nodes]
+            result["exact_element_count"]=len(nodes)
+            result["variable_rows"]=True
+            result["content_instruction"]="Render every supplied node label as an aligned row. Adapt each row to its content; do not show prompt annotations or discard long labels. Add one concise technical function only when it is grounded in the deck focus."
+            return result
+        table_headers=re.search(r"\bcolumns?\s*:\s*\[([^\]]+)\]", section, re.I | re.S)
+        table_rows=re.findall(r"\brow\s*\d+\s*:\s*\[([^\]]+)\]", section, re.I | re.S)
+        if table_headers and table_rows:
+            headers=self._bracket_values(table_headers.group(1))
+            rows=[self._bracket_values(row) for row in table_rows]
+            if headers and all(len(row)==len(headers) for row in rows):
+                result["table_data"]={"headers":headers, "rows":rows}
+                result["content_instruction"]="Render the supplied data as a native editable table. Do not replace it with cards or generic comparison copy."
+                return result
+
+        steps=[]
+        for match in re.finditer(r"\bstep\s*(\d+)\s*:\s*(.+?)(?=(?:[.,]|\n)\s*(?:step\s*\d+\s*:|test\b)|$)", section, re.I | re.S):
+            name=re.sub(r"\s+", " ", match.group(2)).strip(" .")
+            if name:
+                steps.append((int(match.group(1)), name))
+        if steps:
+            steps=[name for _,name in sorted(steps)]
+            result["requirements"]=steps
+            result["exact_element_count"]=len(steps)
+            result["content_instruction"]="Render every requested roadmap step in reading order. Keep the horizontal sequence inside the slide."
+            return result
+
+        metrics=re.findall(r"(?:^|\s)[\"“]?([+$-]?\d[\d,.]*(?:%|[xX])?|\$[\d,.]+[KMB]?)[\"”]?\s*\(\s*Label\s*:\s*([^)]+)\)", section, re.I)
+        if metrics:
+            result["elements"]=[SlideElement(type="metric", heading=label.strip(), value=value, body="") for value,label in metrics]
+            result["exact_element_count"]=len(metrics)
+            result["content_instruction"]="Show every supplied value as a large metric with its exact label."
+            return result
+
+        count_match=re.search(r"\b(\d+)\s+(?:distinct|separate)[^.\n]*(?:bullet|pain point|item|metric)", section, re.I)
+        if count_match:
+            result["exact_element_count"]=int(count_match.group(1))
+        pillar_match=re.search(r"\b(\d+)\s+pillars?\b", section, re.I)
+        if pillar_match:
+            result["exact_element_count"]=int(pillar_match.group(1))
+            result["content_instruction"]="Create indexed pillars in order, each with a complete technical description."
+        quadrant_match=re.search(r"\b(?:2x2|four)\s+(?:grid|quadrant|boxes?)\b", section, re.I)
+        if quadrant_match:
+            result["exact_element_count"]=4
+            result["content_instruction"]="Render four equally sized, distinct quadrant boxes that use the full slide canvas."
+        if re.search(r"\bon-?call matrix\b", section, re.I):
+            result["contact_matrix"]=True
+            result["content_instruction"]="Create an On-Call Matrix with distinct escalation fields. Preserve each generated contact value in its own aligned cell; never use duplicate generic headings."
+        return result
+
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
         if self.classify(prompt).mode != "structured":
             return PresentationBrief()
@@ -197,7 +334,9 @@ class BriefInterpreterAgent:
             if slides:
                 return PresentationBrief(slides=slides, deck_title=payload.get("title"))
         normalized=self._normalize_markdown(prompt)
-        sections=list(re.finditer(r"(?im)^\s*slide\s+(\d+)\s*:\s*([^\n]+)", normalized))
+        deck_title_match=re.search(r"\b(?:presentation|deck)\s+titled\s+[\"“]([^\"”]+)[\"”]", normalized, re.I)
+        declared_deck_title=deck_title_match.group(1).strip() if deck_title_match else None
+        sections=list(re.finditer(r"(?i)\bslide\s+(\d+)\s*:\s*", normalized))
         slides=[]
         for index, match in enumerate(sections):
             number=int(match.group(1))
@@ -208,16 +347,42 @@ class BriefInterpreterAgent:
             if number < 1 or number > 10:
                 continue
             section=normalized[match.end():sections[index+1].start() if index+1 < len(sections) else len(normalized)]
-            layout_text=(self._lines_after(section, "Layout") or [match.group(2).strip()])[0].lower()
+            section_label=section.strip().split(".", 1)[0].strip()
+            layout_text=(self._lines_after(section, "Layout") or [section_label])[0].lower()
             layout=next((value for phrase, value in _LAYOUTS.items() if phrase in layout_text), LayoutType.feature_grid)
-            title=(self._lines_after(section, "Title") or [match.group(2).strip()])[0]
+            explicit_title=re.search(r"\b(?:main\s+)?title\s*(?:must\s+be(?:\s+a\s+long\s+phrase)?\s*)?\:\s*[\"“]([^\"”]+)[\"”]", section, re.I | re.S)
+            title=(self._lines_after(section, "Title") or [explicit_title.group(1).strip() if explicit_title else section_label])[0]
+            if number == 1 and not explicit_title and section_label.casefold() in {"title slide", "cover slide", "title"} and declared_deck_title:
+                title=declared_deck_title
             subtitle_values=self._lines_after(section, "Subtitle")
             requirements=[]
             for marker in ("Topic Areas", "Steps to cover", "Tiers to cover", "Key Outcomes"):
                 requirements.extend(self._lines_after(section, marker))
-            slides.append(BriefSlide(slide_number=number, title=title, subtitle=subtitle_values[0] if subtitle_values else None, layout_type=layout, requirements=requirements))
+            details=self._structured_slide_details(section, number)
+            requirements=details["requirements"] or requirements
+            # A table is semantically a comparison, even when the user calls
+            # it a markdown table.  The native renderer checks table_data
+            # first and therefore never turns it into generic comparison rows.
+            if details["table_data"]:
+                layout=LayoutType.comparison
+            elif details["nested_bullets"]:
+                layout=LayoutType.architecture_layers
+            elif details["elements"] and all(item.type == "row" for item in details["elements"]):
+                layout=LayoutType.comparison
+            elif details["elements"] and re.search(r"\bmetric", section, re.I):
+                layout=LayoutType.key_metrics
+            elif re.search(r"\b(?:split-screen|two[- ]column|2[- ]column)\b", section, re.I):
+                layout=LayoutType.two_column
+            elif details["requirements"] and re.search(r"\broadmap|\bsequence|\bstep\b", section, re.I):
+                layout=LayoutType.step_workflow
+            slides.append(BriefSlide(
+                slide_number=number, title=title, subtitle=subtitle_values[0] if subtitle_values else None,
+                layout_type=layout, requirements=requirements, elements=details["elements"],
+                table_data=details["table_data"], exact_element_count=details["exact_element_count"],
+                content_instruction=details["content_instruction"], contact_matrix=details["contact_matrix"], nested_bullets=details["nested_bullets"], variable_rows=details["variable_rows"],
+            ))
         if slides:
-            return PresentationBrief(slides=slides)
+            return PresentationBrief(slides=slides, deck_title=declared_deck_title)
 
         # Some strong briefs describe a sequence in prose rather than naming
         # every "Slide N". Convert only the hard placement/content constraints
@@ -249,4 +414,24 @@ class BriefInterpreterAgent:
                 slide_number=count, layout_type=LayoutType.feature_grid,
                 requirements=[future.group(2).strip()], exact_element_count=int(future.group(1)),
             ))
+        if constraints:
+            concept_slide=next((item.slide_number for item in constraints if item.exact_element_count and len(item.requirements) == item.exact_element_count), None)
+            for number in range(1,count+1):
+                if number == 1:
+                    stage, intent, recipe="opening", "Frame the topic and explain why the audience should care.", "cover"
+                elif number == 2:
+                    stage, intent, recipe="historical timeline", "Begin the requested journey with the earliest historical milestones.", "flow"
+                elif concept_slide and number < concept_slide:
+                    stage, intent, recipe="progress to present", "Continue the history toward the present before introducing the core concepts.", "flow"
+                elif number == concept_slide:
+                    stage, intent, recipe="concept foundations", "Teach each named concept with a visible subheading and concise explanation.", "grid"
+                elif number == count:
+                    stage, intent, recipe="industry impact", "Close with the required distinct future applications or industries.", "grid"
+                elif number == count-1:
+                    stage, intent, recipe="future trajectory", "Bridge from current capability to the practical future implications.", "evidence"
+                else:
+                    stage, intent, recipe="current state", "Explain the present state of the field before discussing future impact.", "layers"
+                constraints.append(SlideConstraint(
+                    slide_number=number, story_stage=stage, story_intent=intent, preferred_recipe=recipe,
+                ))
         return PresentationBrief(constraints=constraints, requested_slide_count=count) if constraints else PresentationBrief()

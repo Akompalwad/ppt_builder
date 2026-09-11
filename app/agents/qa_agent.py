@@ -63,10 +63,19 @@ def comparison_cover_title(topic: str) -> str | None:
 def summarize_point(value: str, max_words: int) -> str:
     """Keep one complete relevant point; never emit an ellipsis-cut string."""
     text=re.sub(r"\s+", " ", (value or "").replace("\\n", " ").replace("\n", " ")).strip(" •")
+    # `vs.` is an abbreviation, not a sentence boundary.  Treating it as one
+    # caused metric labels such as "Higher Conversion Rates vs. Standard Web"
+    # to be cut at the abbreviation before their layout was even measured.
+    text=re.sub(r"\bvs\.\s*", "versus ", text, flags=re.I)
     if not text: return ""
     sentences=[s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     candidate=next((s for s in sentences if len(s.split())<=max_words), sentences[0] if sentences else text)
-    if len(candidate.split())<=max_words: return candidate
+    if len(candidate.split())<=max_words:
+        # An LLM occasionally ends a valid-looking sentence with a dangling
+        # infinitive such as "... code paths to optimize." Trim the dangling
+        # fragment rather than displaying an unfinished thought.
+        candidate=re.sub(r"\s+to\s+[A-Za-z-]+\.$", ".", candidate).strip()
+        return candidate
     clauses=[c.strip() for c in re.split(r"[,;:]\s*", candidate) if c.strip()]
     kept=[]
     for clause in clauses:
@@ -108,6 +117,7 @@ class PresentationQAAgent:
     def validate_and_recompose(self, spec: PresentationSpec) -> dict:
         issues=[]
         for slide in spec.slides:
+            locked=bool(slide.metadata.get("brief_layout_locked") or slide.metadata.get("content_contract_locked"))
             if slide.layout_type == LayoutType.title_slide:
                 # Preserve the complete comparison named in the user request;
                 # it is the deck's essential promise, not optional filler.
@@ -116,9 +126,9 @@ class PresentationQAAgent:
                     if slide.title != derived_title:
                         issues.append(f"Slide {slide.slide_number}: restored complete comparison title")
                     slide.title=derived_title
-                else:
+                elif not locked:
                     slide.title=summarize_point(slide.title, 10)
-            else:
+            elif not locked:
                 slide.title=summarize_point(slide.title, 8)
             if slide.subtitle: slide.subtitle=summarize_point(slide.subtitle,18)
             # Purpose is rendered as the lead statement in several layouts.
@@ -137,22 +147,42 @@ class PresentationQAAgent:
                 if replacement:
                     slide.purpose=replacement
                     issues.append(f"Slide {slide.slide_number}: replaced internal planning copy with a slide fact")
-            locked=bool(slide.metadata.get("brief_layout_locked") or slide.metadata.get("content_contract_locked"))
             if not locked and slide.layout_type in {LayoutType.step_workflow,LayoutType.process_flow,LayoutType.timeline} and len(slide.elements)>3:
                 slide.layout_type=LayoutType.feature_grid; issues.append(f"Slide {slide.slide_number}: converted dense flow to a readable grid")
             budget=16 if slide.layout_type in {LayoutType.feature_grid,LayoutType.comparison,LayoutType.two_column} else 13
-            max_elements=2 if slide.layout_type==LayoutType.two_column else (4 if locked else 3)
+            requested_count=slide.metadata.get("requested_element_count")
+            # A user-authored five-step roadmap is a hard contract.  The
+            # renderer has responsive five-stage geometry, so QA must never
+            # silently discard its last two stages.
+            max_elements=(
+                2 if slide.layout_type==LayoutType.two_column else
+                int(requested_count) if locked and isinstance(requested_count, int) and requested_count > 0 else
+                4 if locked else 3
+            )
             if len(slide.elements)>max_elements:
                 slide.elements=slide.elements[:max_elements]; issues.append(f"Slide {slide.slide_number}: reduced to {max_elements} decision points")
             for element in slide.elements:
-                if element.heading: element.heading=summarize_point(element.heading,6)
-                if element.label: element.label=summarize_point(element.label,6)
+                if element.heading and not locked: element.heading=summarize_point(element.heading,6)
+                if element.label and not locked: element.label=summarize_point(element.label,6)
                 if element.body:
                     raw_body=element.body
-                    element.body=summarize_point(raw_body,budget)
-                    if _is_unusable_lead(raw_body):
+                    if slide.visual_spec.get("nested_bullets"):
+                        sentences=[part.strip() for part in re.split(r"(?<=[.!?])\s*", raw_body) if part.strip()]
+                        element.body="\n".join(filter(None, (summarize_point(part,13) for part in sentences[:2])))
+                    else:
+                        element.body=summarize_point(raw_body,budget)
+                    if _is_unusable_lead(raw_body) and not (locked and slide.visual_spec.get("nested_bullets")):
                         element.body=summarize_point(element.subtext or element.value or "",budget)
                         issues.append(f"Slide {slide.slide_number}: removed incomplete element copy")
                 if element.subtext: element.subtext=summarize_point(element.subtext,budget)
+                if slide.layout_type == LayoutType.key_metrics and element.value:
+                    # Metric values, their label, and their supporting copy
+                    # occupy distinct visual lanes.  A provider that repeats
+                    # either the value or label as body copy creates an
+                    # obvious "echo label" below the callout.
+                    body=(element.body or "").strip().casefold()
+                    echoes={(element.heading or "").strip().casefold(), str(element.value).strip().casefold()}
+                    if body and body in echoes:
+                        element.body=""
         spec.title=summarize_point(spec.title,8)
         return {"passed":True,"score":100 if not issues else 92,"issues":issues,"policy":"Complete decision-relevant sentences replace clipped copy."}
