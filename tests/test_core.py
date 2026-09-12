@@ -448,6 +448,33 @@ def test_brief_classifier_recognizes_markdown_slide_contracts():
         "Safeguards (analyst approval)", "Playbooks (retrospectives)",
     ]
 
+def test_brief_interpreter_preserves_compact_prose_slide_agenda():
+    """A mobile/copy-paste prompt may lose every line break after `Slides:`."""
+    prompt=(
+        'Create a 10-slide presentation titled "Enterprise Agentic AI Platform Architecture". '
+        'Slides: Title slide with a concise value proposition. '
+        'Business problem — fragmented enterprise knowledge, manual workflows, slow decisions, and hallucination risks. '
+        'Proposed solution — show a high-level architecture diagram from users → AI application → agent orchestration → RAG → LLM → enterprise systems. '
+        'Detailed RAG pipeline showing ingestion, document processing, chunking, embeddings, vector storage, retrieval, reranking, prompt construction, and generation. '
+        'Agentic workflow showing planner, specialized agents, tool calling, memory, validation, and human approval. '
+        'Azure-based deployment architecture using API Management, App Services/AKS, Azure Functions, Service Bus, Blob Storage, Azure AI Search, Key Vault, Application Insights, and Azure OpenAI. '
+        'Security architecture covering Managed Identity, RBAC, network isolation, secrets management, PII protection, prompt injection protection, and audit logging. '
+        'Scalability and reliability architecture covering horizontal scaling, queues, caching, circuit breakers, retries, dead-letter queues, and observability. '
+        'Cost optimization table comparing major infrastructure components and optimization strategies. '
+        'Implementation roadmap divided into MVP, production hardening, enterprise rollout, and autonomous-agent phase. '
+        'Use native editable PowerPoint shapes and connectors.'
+    )
+    agent=BriefInterpreterAgent()
+    brief=agent.interpret(prompt, requested_count=10)
+    assert agent.classify(prompt).mode == "structured"
+    assert brief.deck_title == "Enterprise Agentic AI Platform Architecture"
+    assert len(brief.slides) == 10
+    assert brief.by_number(3).layout_type == LayoutType.process_flow
+    assert [item.heading for item in brief.by_number(3).elements] == [
+        "Users", "AI application", "Agent orchestration", "RAG", "LLM", "Enterprise systems",
+    ]
+    assert brief.by_number(6).native_diagram is True
+
 def test_brief_contract_overrides_the_default_slide_slider_up_to_ten():
     prompt="\n".join(
         f"Slide {number}: Slide {number} title\nLayout: {'Dashboard' if number == 8 else 'Feature Grid'}"

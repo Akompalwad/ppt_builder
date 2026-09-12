@@ -140,11 +140,25 @@ class BriefInterpreterAgent:
         as open-ended lets a storyline agent replace the author's agenda, so
         only accept it when at least three slide-like lines are present.
         """
-        marker=re.search(r"(?im)^\s*slides?\s*:\s*$", normalized)
+        # Textareas normally preserve line breaks, but mobile browsers and
+        # copied chat messages can flatten an otherwise well-formed brief into
+        # one paragraph (``Slides: Title slide ... Business problem ...``).
+        # The contract marker is still meaningful in that form; do not make
+        # preserving an author's slide agenda depend on formatting trivia.
+        marker=re.search(r"(?i)\bslides?\s*:\s*", normalized)
         if not marker:
             return []
+        remainder=normalized[marker.end():]
+        # Split compact prose only at known slide-agenda starters.  This keeps
+        # normal sentences intact while recovering the ten separate contracts
+        # from a line-break-free executive brief.
+        compact_parts=re.split(
+            r"(?i)(?=\b(?:title\s+slide|business\s+problem|proposed\s+solution|detailed\s+rag\s+pipeline|agentic\s+workflow|azure(?:-based)?\s+deployment\s+architecture|security\s+architecture|scalability\s+and\s+reliability\s+architecture|cost\s+optimization(?:\s+table)?|implementation\s+roadmap)\b)",
+            remainder,
+        )
+        source_lines=compact_parts if len(compact_parts) >= 3 else remainder.splitlines()
         lines=[]
-        for raw in normalized[marker.end():].splitlines():
+        for raw in source_lines:
             line=raw.strip()
             if not line:
                 continue
@@ -195,6 +209,10 @@ class BriefInterpreterAgent:
                 # "Users") instead of treating it as diagram prose.
                 chain=re.split(r"\bfrom\s+", line, maxsplit=1, flags=re.I)
                 listed=self._listed_items(chain[1] if len(chain) == 2 else line)
+                # The introductory connector normally reads "from users".
+                # Presentation node labels need title casing without changing
+                # user-supplied acronyms such as RAG or LLM.
+                listed=[item[:1].upper() + item[1:] if item else item for item in listed]
             else:
                 listed=["Users", "AI application", "Agent orchestration", "RAG", "LLM", "Enterprise systems"]
             native_diagram=True; instruction="Render this as a connected native architecture flow. Every named component must be visible and editable."
