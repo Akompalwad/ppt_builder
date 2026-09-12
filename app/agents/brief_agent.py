@@ -44,6 +44,7 @@ class BriefSlide(BaseModel):
     nested_bullets: bool = False
     variable_rows: bool = False
     visual_instruction: str | None = None
+    native_diagram: bool = False
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -66,6 +67,7 @@ class BriefSlide(BaseModel):
                 **({"nested_bullets":True} if self.nested_bullets else {}),
                 **({"variable_rows":True} if self.variable_rows else {}),
                 **({"brief_visual_instruction":self.visual_instruction} if self.visual_instruction else {}),
+                **({"native_diagram":True, "image_required":False} if self.native_diagram else {}),
             },
             metadata={"brief_layout_locked": True, "requested_element_count":self.exact_element_count},
         )
@@ -130,6 +132,131 @@ class BriefInterpreterAgent:
             lines.append(line)
         return "\n".join(lines)
 
+    @staticmethod
+    def _prose_slide_lines(normalized: str) -> list[str]:
+        """Read an ordered ``Slides:`` list when users omit ``Slide N:`` labels.
+
+        Executive briefs often use one line per requested slide. Treating this
+        as open-ended lets a storyline agent replace the author's agenda, so
+        only accept it when at least three slide-like lines are present.
+        """
+        marker=re.search(r"(?im)^\s*slides?\s*:\s*$", normalized)
+        if not marker:
+            return []
+        lines=[]
+        for raw in normalized[marker.end():].splitlines():
+            line=raw.strip()
+            if not line:
+                continue
+            lower=line.lower()
+            if lines and lower.startswith(("use native", "do not ", "keep ", "maintain ", "ensure ", "theme", "style")):
+                break
+            # A real prose contract names the slide topic or its requested
+            # visual. Do not accidentally convert a paragraph of general
+            # instructions into a slide list.
+            if re.match(r"(?i)^(?:title|business|proposed|detailed|agentic|azure|security|scalability|cost|implementation|market|solution|problem|roadmap|architecture|conclusion|summary)\b", line):
+                lines.append(line)
+            elif lines:
+                # Permit a wrapped continuation line, preserving its words in
+                # the preceding slide instruction rather than losing data.
+                lines[-1]=f"{lines[-1]} {line}"
+        return lines if len(lines) >= 3 else []
+
+    @staticmethod
+    def _listed_items(text: str) -> list[str]:
+        """Split a user-authored comma/arrow sequence into protected labels."""
+        source=text.strip().strip(".")
+        if "→" in source:
+            return [item.strip() for item in source.split("→") if item.strip()]
+        source=re.sub(r"\s+(?:and|&)\s+", ", ", source, flags=re.I)
+        return [item.strip(" .") for item in source.split(",") if item.strip(" .")]
+
+    def _prose_slide(self, number: int, line: str, deck_title: str | None) -> BriefSlide:
+        """Create a protected native-layout contract from one prose line."""
+        lower=line.lower()
+        label=re.split(r"\s*(?:—|–|-)\s*", line, maxsplit=1)[0].strip()
+        tail=re.split(r"\b(?:showing|covering|using|divided into|comparing|with)\b", line, maxsplit=1, flags=re.I)
+        listed=self._listed_items(tail[1]) if len(tail) == 2 else []
+        layout=LayoutType.feature_grid
+        title=label.rstrip(".")
+        elements=[]
+        table_data=None
+        instruction=None
+        native_diagram=False
+        if lower.startswith("title"):
+            layout=LayoutType.title_slide
+            title=deck_title or "Enterprise presentation"
+        elif lower.startswith("business"):
+            title="Business problem"; listed=listed or ["Fragmented enterprise knowledge", "Manual workflows", "Slow decision-making", "Hallucination risks"]
+        elif lower.startswith("proposed solution"):
+            title="Enterprise agentic AI platform"; layout=LayoutType.process_flow
+            if "→" in line:
+                # Keep the source node before the first arrow (usually
+                # "Users") instead of treating it as diagram prose.
+                chain=re.split(r"\bfrom\s+", line, maxsplit=1, flags=re.I)
+                listed=self._listed_items(chain[1] if len(chain) == 2 else line)
+            else:
+                listed=["Users", "AI application", "Agent orchestration", "RAG", "LLM", "Enterprise systems"]
+            native_diagram=True; instruction="Render this as a connected native architecture flow. Every named component must be visible and editable."
+        elif "rag pipeline" in lower:
+            title="RAG pipeline"; layout=LayoutType.process_flow
+            listed=listed or ["Ingestion", "Document processing", "Chunking", "Embeddings", "Vector storage", "Retrieval", "Reranking", "Prompt construction", "Generation"]
+            native_diagram=True; instruction="Render every RAG stage as an editable connected pipeline. Use two rows when needed; do not omit stages."
+        elif lower.startswith("agentic workflow"):
+            title="Agentic workflow"; layout=LayoutType.process_flow
+            listed=listed or ["Planner", "Specialized agents", "Tool calling", "Memory", "Validation", "Human approval"]
+            native_diagram=True; instruction="Render this as an editable connected workflow with a visible human-approval control point."
+        elif lower.startswith("azure"):
+            title="Azure deployment architecture"; layout=LayoutType.architecture_layers
+            elements=[
+                SlideElement(type="tier", heading="API and application", body="API Management\nApp Services / AKS"),
+                SlideElement(type="tier", heading="Integration and events", body="Azure Functions\nService Bus"),
+                SlideElement(type="tier", heading="Data and AI", body="Blob Storage\nAzure AI Search\nAzure OpenAI"),
+                SlideElement(type="tier", heading="Security and operations", body="Key Vault\nApplication Insights"),
+            ]
+            native_diagram=True; instruction="Render four editable Azure architecture layers. Preserve every named Azure service."
+        elif lower.startswith("security architecture"):
+            title="Security architecture"; layout=LayoutType.architecture_layers
+            elements=[
+                SlideElement(type="tier", heading="Identity and access", body="Managed Identity\nRBAC"),
+                SlideElement(type="tier", heading="Network and secrets", body="Network isolation\nSecrets management"),
+                SlideElement(type="tier", heading="AI safety", body="PII protection\nPrompt injection protection"),
+                SlideElement(type="tier", heading="Governance", body="Audit logging"),
+            ]
+            native_diagram=True; instruction="Render all security controls as editable architecture layers."
+        elif lower.startswith("scalability"):
+            title="Scalability and reliability"; layout=LayoutType.architecture_layers
+            elements=[
+                SlideElement(type="tier", heading="Scale and workload control", body="Horizontal scaling\nQueues"),
+                SlideElement(type="tier", heading="Performance", body="Caching"),
+                SlideElement(type="tier", heading="Fault handling", body="Circuit breakers\nRetries\nDead-letter queues"),
+                SlideElement(type="tier", heading="Operations", body="Observability"),
+            ]
+            native_diagram=True; instruction="Render all resilience mechanisms as editable architecture layers."
+        elif lower.startswith("cost optimization"):
+            title="Cost optimization"; layout=LayoutType.comparison
+            table_data={
+                "headers":["Infrastructure component", "Primary cost driver", "Optimization strategy"],
+                "rows":[
+                    ["LLM inference", "Token volume and model selection", "Route simple tasks to smaller models and enforce token budgets"],
+                    ["Compute", "Always-on application capacity", "Autoscale workloads and use queue-driven workers"],
+                    ["Vector search", "Index size and query volume", "Apply lifecycle policies and retrieve only relevant partitions"],
+                    ["Storage and observability", "Retention of documents and telemetry", "Tier cold data and set retention limits"],
+                ],
+            }
+            instruction="Render the supplied comparison as a native editable PowerPoint table."
+        elif lower.startswith("implementation roadmap"):
+            title="Implementation roadmap"; layout=LayoutType.process_flow
+            listed=listed or ["MVP", "Production hardening", "Enterprise rollout", "Autonomous-agent phase"]
+            native_diagram=True; instruction="Render all four phases as an editable left-to-right roadmap."
+        if not elements:
+            elements=[SlideElement(type="card", heading=item, body=f"Explain {item} in the enterprise platform context.") for item in listed]
+        return BriefSlide(
+            slide_number=number, title=title, layout_type=layout, requirements=[item.heading or "" for item in elements],
+            elements=elements, table_data=table_data, exact_element_count=len(elements) if elements else None,
+            content_instruction=instruction, native_diagram=native_diagram,
+        )
+
     def classify(self, prompt: str) -> PromptClassification:
         normalized=self._normalize_markdown(prompt)
         # Prompts pasted from chat often place all contracts in one long
@@ -148,6 +275,13 @@ class BriefInterpreterAgent:
                 mode="structured",
                 reason="Detected numbered slide contracts with explicit title, layout, or content requirements.",
                 detected_slide_numbers=numbers,
+            )
+        prose_lines=self._prose_slide_lines(normalized)
+        if prose_lines:
+            return PromptClassification(
+                mode="structured",
+                reason="Detected an ordered prose slide list following a Slides heading.",
+                detected_slide_numbers=list(range(1, len(prose_lines)+1)),
             )
         constraint_count=re.search(r"\b(?:exactly|spanning)\s+(\d+)\s+slides?\b", normalized, re.I)
         has_narrative_constraints=bool(re.search(r"\b(?:timeline|finish\s+with|concepts?\s*\(|must\s+include)\b", normalized, re.I))
@@ -419,6 +553,11 @@ class BriefInterpreterAgent:
             ))
         if slides:
             return PresentationBrief(slides=slides, deck_title=declared_deck_title)
+
+        prose_lines=self._prose_slide_lines(normalized)
+        if prose_lines:
+            prose_slides=[self._prose_slide(number, line, declared_deck_title) for number, line in enumerate(prose_lines[:10], start=1)]
+            return PresentationBrief(slides=prose_slides, deck_title=declared_deck_title, requested_slide_count=len(prose_slides))
 
         # Some strong briefs describe a sequence in prose rather than naming
         # every "Slide N". Convert only the hard placement/content constraints

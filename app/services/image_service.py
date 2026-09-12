@@ -75,7 +75,10 @@ class ImageService:
         if not configuration["ready"]:
             return [{"status":"skipped","reason":configuration["message"]}]
         targets=[1]
-        targets.extend(s.slide_number for s in spec.slides[1:] if s.visual_spec.get("image_required") is True)
+        targets.extend(
+            s.slide_number for s in spec.slides[1:]
+            if not s.visual_spec.get("native_diagram") and s.visual_spec.get("image_required") is True
+        )
         targets=list(dict.fromkeys(targets))[:self.settings.max_generated_images_per_deck]
         results=[]
         for number in targets:

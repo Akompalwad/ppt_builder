@@ -109,6 +109,15 @@ class SlideContentAgent:
         if not isinstance(visual_spec, dict):
             visual_spec={}
             repairs.append("visual_spec")
+        merged_visual_spec={**slide.visual_spec, **visual_spec}
+        # These fields describe user-mandated rendering behaviour, not a
+        # creative preference the provider may override. In particular, a
+        # native architecture must never silently become a stock-image slide.
+        if directive and directive.native_diagram:
+            merged_visual_spec["native_diagram"]=True
+            merged_visual_spec["image_required"]=False
+        if directive and directive.table_data:
+            merged_visual_spec["table_data"]=directive.table_data
         return {
             **payload,
             "slide_number":slide.slide_number,
@@ -119,7 +128,7 @@ class SlideContentAgent:
             # an occasionally malformed content completion.
             "layout_type":directive.layout_type.value if directive else fallback.layout_type.value,
             "elements":elements,
-            "visual_spec":{**slide.visual_spec, **visual_spec},
+            "visual_spec":merged_visual_spec,
             "metadata":{
                 **slide.metadata,
                 "brief_layout_locked":bool(directive),

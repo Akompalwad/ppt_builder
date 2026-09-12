@@ -157,6 +157,12 @@ Rules: slide 1 must use cover; the final slide must use close. Vary adjacent rec
             resolved_layout=slide.layout_type if (slide.metadata.get("brief_layout_locked") or constraint_layout) else recipe.layout
             slide.layout_type=resolved_layout
             selected_variant=choice.visual_variant if choice else self._default_variant(recipe)
+            # A user who explicitly asks for an architecture, pipeline, or
+            # workflow diagram is asking for real PowerPoint geometry.  Keep
+            # it on the native renderer path rather than selecting a visual
+            # variant that may favour a decorative composition or an image.
+            if slide.visual_spec.get("native_diagram"):
+                selected_variant="native_diagram"
             # A chart is chosen from supplied data, never from model-invented
             # values. The renderer validates the structure before drawing it.
             if slide.visual_spec.get("chart_data"):

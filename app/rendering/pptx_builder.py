@@ -271,20 +271,45 @@ def contact_matrix(slide, spec, d):
         add_text(slide,element_text(item),x+.20,y+1.24,width-.40,height-1.42,text_size(element_text(item),13,width-.40),d.text_secondary)
 
 def workflow(slide, spec, d):
-    """Connected flow stages with all copy contained in each stage surface."""
-    items=spec.elements[:5]; n=max(1,len(items)); gap=.20 if n >= 5 else .28; width=(W-2*MARGIN-gap*(n-1))/n
-    stage_y,stage_h=2.18,3.52
-    for i, item in enumerate(items):
-        x=MARGIN+i*(width+gap)
-        add_surface(slide,x,stage_y,width,stage_h,d,emphasis=i==0)
-        add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+.24,stage_y+.25,.46,.46,d.primary_color,d.primary_color)
-        add_text(slide,f"{i+1:02d}",x+.24,stage_y+.39,.46,.14,9,d.background_color,True,align=PP_ALIGN.CENTER)
-        if i<n-1:
-            connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+width+.03), Inches(stage_y+stage_h/2), Inches(x+width+gap-.03), Inches(stage_y+stage_h/2)); connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.5)
-        heading_size=16 if n >= 5 else 20
-        body_size=12 if n >= 5 else 15
-        add_text(slide,item.heading or f"Step {i+1}",x+.18,stage_y+.95,width-.36,.78,text_size(item.heading or "",heading_size,width-.36),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        add_text(slide,element_text(item),x+.20,stage_y+1.94,width-.40,1.20,text_size(element_text(item),body_size,width-.40),d.text_secondary,align=PP_ALIGN.CENTER)
+    """Connected native stages, with a readable two-row mode for dense flows."""
+    items=spec.elements[:10]
+    count=max(1,len(items))
+    columns=min(5, count)
+    rows=(count+columns-1)//columns
+    gap_x=.18 if columns >= 5 else .28
+    gap_y=.24
+    width=(W-2*MARGIN-gap_x*(columns-1))/columns
+    available_h=3.82
+    stage_h=(available_h-gap_y*(rows-1))/rows
+    stage_y=2.02 if rows > 1 else 2.18
+    nodes=[]
+    for index, item in enumerate(items):
+        row,column=divmod(index, columns)
+        x=MARGIN+column*(width+gap_x)
+        y=stage_y+row*(stage_h+gap_y)
+        nodes.append((x,y,item,index,row,column))
+    # Draw lines first so stage surfaces and labels remain unobstructed.
+    for index,(x,y,_item,_number,row,column) in enumerate(nodes[:-1]):
+        nx,ny,*_=nodes[index+1]
+        if row == nodes[index+1][4]:
+            start=(x+width+.025,y+stage_h/2); end=(nx-.025,ny+stage_h/2)
+        else:
+            start=(x+width/2,y+stage_h+.02); end=(nx+width/2,ny-.02)
+        connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(start[0]), Inches(start[1]), Inches(end[0]), Inches(end[1]))
+        connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.35)
+    for x,y,item,index,_row,_column in nodes:
+        add_surface(slide,x,y,width,stage_h,d,emphasis=index==0)
+        badge=.38 if rows > 1 else .46
+        add_shape(slide,MSO_AUTO_SHAPE_TYPE.OVAL,x+.16,y+.16,badge,badge,d.primary_color,d.primary_color)
+        add_text(slide,f"{index+1:02d}",x+.16,y+.16+badge*.30,badge,.13,8,d.background_color,True,align=PP_ALIGN.CENTER)
+        heading=item.heading or f"Step {index+1}"
+        heading_size=13 if rows > 1 else (16 if count >= 5 else 20)
+        body_size=10 if rows > 1 else (12 if count >= 5 else 15)
+        heading_y=y+(.68 if rows > 1 else .95)
+        heading_h=.52 if rows > 1 else .78
+        body_y=heading_y+heading_h+.16
+        add_text(slide,heading,x+.14,heading_y,width-.28,heading_h,text_size(heading,heading_size,width-.28),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
+        add_text(slide,element_text(item),x+.16,body_y,width-.32,max(.30,y+stage_h-body_y-.16),text_size(element_text(item),body_size,width-.32),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
     """A compact, connected process composition for an explicit workflow.
@@ -356,8 +381,15 @@ def two_columns(slide, spec, d):
 def architecture(slide, spec, d):
     items=spec.elements[:4]
     count=max(1,len(items)); gap=.18; layer_h=(4.55-gap*(count-1))/count
+    layers=[]
     for i,item in enumerate(items):
         y=2.02+i*(layer_h+gap); inset=.28*i; x=MARGIN+inset; width=11.8-2*inset
+        layers.append((x,y,width,item,i))
+    for index,(x,y,width,_item,_i) in enumerate(layers[:-1]):
+        nx,ny,nwidth,*_=layers[index+1]
+        connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+width/2), Inches(y+layer_h+.02), Inches(nx+nwidth/2), Inches(ny-.02))
+        connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.25)
+    for x,y,width,item,i in layers:
         add_surface(slide,x,y,width,layer_h,d,emphasis=i==0)
         add_text(slide,item.heading or f"Layer {i+1}",x+.30,y+.18,width-.60,.30,text_size(item.heading or "",19,width-.60),d.primary_color,True,font=d.font_heading)
         if spec.visual_spec.get("nested_bullets"):
