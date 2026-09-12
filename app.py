@@ -1,7 +1,7 @@
 import base64
 import html
 import os, time, uuid, httpx, streamlit as st
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import streamlit.components.v1 as components
 from app.schemas.presentation import PresentationSpec
 from app.rendering.web_renderer import render_slide_html
@@ -146,6 +146,9 @@ st.markdown("""
   .signin-google:hover { transform:translateY(-1px); background:rgba(255,255,255,.14); border-color:#fff; }
   .signin-google svg { width:20px; height:20px; flex:0 0 auto; }
   .signin-footnote { color:#829ab1 !important; font-size:.76rem !important; }
+  .library-thumb { width:3.1rem; height:4rem; display:grid; place-items:center; border-radius:.55rem; color:#f7fbff; font-size:1.15rem; font-weight:850; letter-spacing:.04em; background:linear-gradient(145deg, var(--deck-accent), #111b31); border:1px solid rgba(255,255,255,.20); box-shadow:0 8px 18px rgba(0,0,0,.22); }
+  .library-meta { color:#93a9bd; font-size:.78rem; line-height:1.45; }
+  .library-status { display:inline-block; margin-right:.4rem; padding:.1rem .42rem; border-radius:99px; color:#aaf3d8; font-size:.67rem; font-weight:800; letter-spacing:.05em; text-transform:uppercase; background:rgba(74,222,128,.12); border:1px solid rgba(74,222,128,.28); }
   @media (max-width: 640px) { .signin-shell { min-height:66vh; padding:1rem 0 3rem; } .signin-card { padding:2.25rem 1.45rem 1.85rem; border-radius:1rem; } }
 </style>
 """, unsafe_allow_html=True)
@@ -445,10 +448,20 @@ def retention_countdown(expires_at: str | None) -> str:
     hours, remainder=divmod(remainder, 3600)
     minutes=max(1, remainder // 60)
     if days:
-        return f"T− {days}d {hours}h"
+        return f"Expires in {days}d {hours}h"
     if hours:
-        return f"T− {hours}h {minutes}m"
-    return f"T− {minutes}m"
+        return f"Expires in {hours}h {minutes}m"
+    return f"Expires in {minutes}m"
+
+
+def library_display_title(item: dict) -> str:
+    """Avoid presenting a generic creation request as the deck title."""
+    title=" ".join(str(item.get("title") or "").split()).strip(" .")
+    generic=title.lower()
+    if not title or generic.startswith(("i would like to create", "create a presentation", "create presentation")):
+        count=item.get("slide_count") or ""
+        return f"{count}-slide presentation" if count else "Untitled presentation"
+    return title
 
 
 def relative_time(timestamp: str | None) -> str:
@@ -550,15 +563,39 @@ def presentation_library(history: list[dict]):
     if not completed:
         st.info("Completed decks will appear here.")
         return
-    st.caption("Files are removed automatically when their retention time reaches zero.")
+    st.caption("Your completed decks. Generated files expire automatically, but each deck remains listed here.")
+    groups={"Today":[], "Yesterday":[], "Earlier":[]}
+    today=datetime.now(timezone.utc).date()
     for item in completed:
-        with st.container(border=True):
-            left, right=st.columns([4, 1])
-            left.markdown(f"**{item['title']}**")
-            left.caption(f"Updated {item['updated_at'][:10]} · {retention_countdown(item.get('file_expires_at'))}")
-            if right.button("Open", key=f"open_library_{item['id']}", use_container_width=True):
-                st.session_state.job={"presentation_id":item["id"]}
-                st.rerun()
+        try:
+            updated=datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
+            updated_date=(updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)).date()
+        except (KeyError, ValueError):
+            updated_date=None
+        group="Today" if updated_date == today else "Yesterday" if updated_date == today - timedelta(days=1) else "Earlier"
+        groups[group].append(item)
+    for group, items in groups.items():
+        if not items:
+            continue
+        st.markdown(f"#### {group}")
+        for item in items:
+            title=library_display_title(item)
+            slide_count=item.get("slide_count") or "—"
+            theme=item.get("theme") or "Custom theme"
+            accent=str(item.get("accent_color") or "#2b6cb0")
+            initials="".join(word[:1] for word in title.split()[:2]).upper() or "SW"
+            with st.container(border=True):
+                thumbnail, details, action=st.columns([0.72, 3.2, 0.85], vertical_alignment="center")
+                thumbnail.markdown(f'<div class="library-thumb" style="--deck-accent:{html.escape(accent, quote=True)}">{html.escape(initials)}</div>', unsafe_allow_html=True)
+                details.markdown(f"**{html.escape(title)}**")
+                details.markdown(
+                    f'<div class="library-meta"><span class="library-status">Ready</span>{slide_count} slides · {html.escape(str(theme))}<br>'
+                    f'Updated {relative_time(item.get("updated_at"))} · {html.escape(retention_countdown(item.get("file_expires_at")))}</div>',
+                    unsafe_allow_html=True,
+                )
+                if action.button("Open", key=f"open_library_{item['id']}", use_container_width=True):
+                    st.session_state.job={"presentation_id":item["id"]}
+                    st.rerun()
 try:
     access=httpx.post(f"{API}/api/access/claim",headers=ACCESS_HEADERS,timeout=5)
     if access.status_code == 429:
@@ -592,7 +629,8 @@ with st.sidebar:
     # Local Ollama remains an opt-in server-side contingency only. Users choose
     # between the two supported cloud agent sources.
     provider=st.selectbox("Provider",["Gemini","NVIDIA"])
-    theme=st.selectbox("Theme",["Auto","Cyber Dark","Minimalist White","Corporate Blue"]); count=st.slider("Slides",3,10,6)
+    theme=st.selectbox("Theme",["Auto","Cyber Dark","Minimalist White","Corporate Blue"])
+    count=st.number_input("Number of slides *", min_value=3, max_value=10, value=None, step=1, help="Required. Enter an integer from 3 to 10.")
     audience=st.text_input("Audience","General audience"); tone=st.selectbox("Tone",["Professional","Executive","Educational","Persuasive"])
     include_images=st.checkbox("Use topic-specific Unsplash visuals",value=True,help="Uses Unsplash when configured; at most three visuals per deck. Native editable visuals remain the fallback.")
     if include_images:
@@ -631,7 +669,7 @@ with st.sidebar:
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
             about_slideweaver()
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy", key="topic_input")
-if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
+if st.button("Generate presentation",type="primary",disabled=not topic.strip() or count is None):
     try:
         if provider in {"NVIDIA", "Gemini"}:
             provider_id=provider.lower()
@@ -639,7 +677,7 @@ if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
             if check.status_code != 200:
                 st.error(f"{provider} is unavailable or the selected model is not enabled. No job was started.")
                 st.stop()
-        r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":count,"theme":theme,"provider":provider.lower(),"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job=r.json()
+        r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":int(count),"theme":theme,"provider":provider.lower(),"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job=r.json()
     except httpx.HTTPStatusError as exc:
         # A validation error (for example a malformed structured brief) is a
         # reachable API returning useful feedback, not a connectivity failure.

@@ -68,3 +68,11 @@ python -c "import sqlite3; db=sqlite3.connect('storage/presentations.db'); print
 To reset every active-session slot:
 python -c "import sqlite3; db=sqlite3.connect('storage/presentations.db'); cur=db.execute('DELETE FROM active_access_sessions'); db.commit(); print(f'Removed {cur.rowcount} active session(s).')"
 No service restart is needed.
+
+# Copy a particular presentation 
+
+scp -i ssh-key-2026-09-08.key \
+  opc@80.225.249.18:/home/opc/code/ppt_builder/storage/files/6892aa17-077e-4e6a-9893-79a0841e82c8/versions/1/presentation.pptx \
+  ~/Downloads/ppt_builder_files/presentation2.pptx
+
+  storage/files/e87e73f6-b6d7-4700-a359-c76a387cd258/versions/1/presentation.pptx

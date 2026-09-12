@@ -38,7 +38,10 @@ class PresentationService:
             history=[]
             for presentation in presentations:
                 version=db.get(PresentationVersion,presentation.current_version_id) if presentation.current_version_id else None
-                metadata=(version.spec_json or {}).get("metadata", {}) if version else {}
+                spec_json=version.spec_json or {} if version else {}
+                metadata=spec_json.get("metadata", {})
+                slides=spec_json.get("slides", [])
+                design=spec_json.get("design_system", {})
                 history.append({
                     "id":presentation.id,
                     "title":presentation.title,
@@ -46,6 +49,9 @@ class PresentationService:
                     "created_at":presentation.created_at.isoformat(),
                     "updated_at":presentation.updated_at.isoformat(),
                     "file_expires_at":metadata.get("file_expires_at"),
+                    "slide_count":len(slides),
+                    "theme":spec_json.get("theme"),
+                    "accent_color":design.get("primary_color"),
                 })
             return history
     def active_job_for_current_user(self, session_id: str) -> dict | None:
