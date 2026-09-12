@@ -1,4 +1,5 @@
 from __future__ import annotations
+from datetime import datetime, timezone
 from pathlib import Path
 from sqlalchemy import select
 from app.models.database import GenerationJob, OAuthSession, Presentation, PresentationVersion, SessionLocal, User
@@ -13,6 +14,38 @@ from app.services.generation_queue import shared_generation_queue
 
 DEV_EMAIL="local@example.test"
 class PresentationService:
+    @staticmethod
+    def _timing_estimate(job: GenerationJob, *, jobs_ahead: int = 0) -> dict:
+        """Return an honest, coarse ETA without pretending cloud work is deterministic.
+
+        Provider latency, image retrieval, and shared rate gates vary by job.
+        The estimate combines elapsed time, progress, and a conservative
+        baseline for the active stage, and is deliberately labelled as an
+        estimate by the UI.
+        """
+        created=job.created_at.replace(tzinfo=timezone.utc) if job.created_at.tzinfo is None else job.created_at
+        elapsed=max(0, int((datetime.now(timezone.utc)-created).total_seconds()))
+        status=str(job.status or "").upper()
+        if status == "COMPLETED":
+            return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":0, "current_stage_eta_seconds":0, "is_estimate":True}
+        stage=str(job.current_stage or "").lower()
+        stage_budget=(
+            90 if "slide content" in stage or "drafting" in stage else
+            30 if any(token in stage for token in ("brief", "theme", "storyline", "design director")) else
+            25 if any(token in stage for token in ("visual asset", "image", "qa", "quality")) else
+            15 if any(token in stage for token in ("renderer", "pptx", "composing")) else 45
+        )
+        if status == "QUEUED":
+            # A queued deck waits for its own typical run plus every job in
+            # front of it. This is intentionally a range-like estimate rather
+            # than a false promise of an exact start time.
+            remaining=min(900, max(stage_budget, (jobs_ahead + 1) * 120))
+            return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_budget, "is_estimate":True}
+        progress=max(1, min(99, int(job.progress or 1)))
+        progress_projection=int(elapsed * (100-progress) / max(progress, 20))
+        remaining=min(900, max(stage_budget, progress_projection))
+        return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_budget, "is_estimate":True}
+
     def _user(self, db, session_id: str):
         oauth_session=db.get(OAuthSession, session_id)
         if oauth_session:
@@ -108,7 +141,7 @@ class PresentationService:
             j=db.get(GenerationJob,job_id); user=self._user(db,session_id); presentation=db.get(Presentation,j.presentation_id) if j else None
             if not j or not presentation or presentation.user_id != user.id:
                 return None
-            result={"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message}
+            result={"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message,"created_at":j.created_at.isoformat()}
             if j.status in {"QUEUED","RUNNING"}:
                 queue=shared_generation_queue(get_settings().generation_max_concurrent_jobs)
                 # The database covers the brief interval after the API accepts
@@ -129,6 +162,9 @@ class PresentationService:
                     "jobs_ahead":max(0,(position or 1)-1),
                 })
                 result["queue"]=queue_state
+                result["timing"]=self._timing_estimate(j, jobs_ahead=queue_state["jobs_ahead"])
+            else:
+                result["timing"]=self._timing_estimate(j)
             return result
     def create_slide_edit(self,presentation_id:str,slide_number:int,instruction:str,session_id:str) -> str:
         """Queue an isolated edit without making the existing deck unavailable."""

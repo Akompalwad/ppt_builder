@@ -50,6 +50,20 @@ def explicit_brand_theme(prompt: str) -> DesignSystem | None:
             header_color="#12355B", text_primary="#12355B", text_secondary="#43576B",
             muted_text="#718398", card_style="flat", shadow_style="none",
         )
+    # A named industrial palette is a binding branding contract, not merely
+    # topic context.  Without this branch supply-chain decks fell through to
+    # the generic security theme and acquired its teal accents.
+    industrial_palette=(
+        ("industrial-tech" in text or "industrial tech" in text)
+        and "slate" in text and "steel blue" in text and "amber" in text
+    )
+    if industrial_palette:
+        return DesignSystem(
+            name="Industrial Steel", background_color="#18232D", surface_color="#243440",
+            primary_color="#5B86A6", secondary_color="#9BB6C8", accent_color="#F2A93B",
+            header_color="#F3F7FA", text_primary="#F3F7FA", text_secondary="#CBD8E0",
+            muted_text="#94AAB8", card_style="elevated", shadow_style="soft",
+        )
     return None
 
 def auto_theme_for_topic(topic: str) -> DesignSystem:
@@ -100,6 +114,28 @@ class PresentationOrchestrator:
         brief_agent=BriefInterpreterAgent()
         prompt_classification=brief_agent.classify(topic)
         brief=brief_agent.interpret(topic, request.slide_count)
+        selected_provider=(request.provider or "").lower()
+        settings=get_settings()
+        # Rules handle explicit contracts without an extra request. For an
+        # ambiguous but detailed executive brief, use one bounded cloud-model
+        # call to turn its agenda into protected contracts before drafting.
+        if (
+            not brief.is_structured
+            and settings.llm_brief_classification_enabled
+            and selected_provider in {"gemini", "nvidia"}
+        ):
+            stage("Brief Classification Agent — interpreting ambiguous agenda", 12)
+            try:
+                model_brief, model_classification=brief_agent.interpret_with_llm(
+                    topic, provider=selected_provider, model=request.model, requested_count=request.slide_count,
+                )
+                if model_brief and model_classification:
+                    brief=model_brief
+                    prompt_classification=model_classification
+            except Exception:
+                # Classification is an enhancement. Provider capacity or
+                # malformed JSON must never block ordinary deck generation.
+                pass
         if brief.deck_title:
             title=_clean_model_copy(brief.deck_title,52).rstrip(".")
         # A structured prompt is a stronger instruction than the UI's default
@@ -108,7 +144,6 @@ class PresentationOrchestrator:
         if brief.is_structured:
             requested_brief_count=brief.requested_slide_count or max(slide.slide_number for slide in brief.slides)
             request=request.model_copy(update={"slide_count":requested_brief_count})
-        selected_provider=(request.provider or "").lower()
         if selected_provider in {"nvidia", "gemini", "ollama"}:
             try:
                 stage("Theme Agent — selecting a visual system", 18)
@@ -120,7 +155,6 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 # The previous fixed 6,000-token budget made a three-slide deck
                 # unnecessarily slow and prone to timing out on reasoning models.
                 token_budget=max(1800, min(4000, request.slide_count * 550 + 600))
-                settings=get_settings()
                 # A structured brief always uses one canonical model call per
                 # slide: a full-deck call could silently omit its contracts.
                 slide_by_slide=brief.is_structured or selected_provider in {"gemini", "ollama"} or settings.nvidia_slide_by_slide_enabled

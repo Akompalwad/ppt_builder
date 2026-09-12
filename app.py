@@ -143,6 +143,7 @@ st.markdown("""
   .agent-pipeline__state i { display:inline-block; width:.42rem; height:.42rem; border-radius:50%; background:#f7b955; box-shadow:0 0 8px rgba(247,185,85,.55); }
   .agent-pipeline__state.complete i { background:#4ade80; box-shadow:0 0 8px rgba(74,222,128,.55); }
   .agent-pipeline__state.failed i { background:#ff6b6b; box-shadow:0 0 8px rgba(255,107,107,.55); }
+  .agent-pipeline__timing { color:#8ca3bc; font-size:.72rem; margin-top:.48rem; }
   .signin-shell { min-height:72vh; display:flex; align-items:center; justify-content:center; padding:2rem 1rem 4rem; }
   .signin-card { width:min(100%, 480px); padding:2.7rem 2.55rem 2.25rem; border:1px solid rgba(122, 238, 219, .25); border-radius:1.25rem; text-align:center; background:linear-gradient(145deg, rgba(15, 36, 57, .91), rgba(12, 18, 48, .91)); box-shadow:0 28px 80px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.08); }
   .signin-mark { width:3.3rem; height:3.3rem; margin:0 auto 1.35rem; display:grid; place-items:center; border-radius:1rem; color:#06111c; font-size:1.35rem; font-weight:900; background:linear-gradient(135deg, #4bf0cd, #6a82ff); box-shadow:0 0 0 6px rgba(73,235,210,.08), 0 10px 30px rgba(51,209,199,.26); }
@@ -501,6 +502,17 @@ def _pipeline_stage_index(current_stage: str, stages: list[tuple[str, tuple[str,
     return -1
 
 
+def _duration_label(seconds: object) -> str:
+    try:
+        value=max(0, int(seconds))
+    except (TypeError, ValueError):
+        return "calculating"
+    if value < 60:
+        return f"about {max(5, value // 5 * 5)} sec"
+    minutes, remainder=divmod(value, 60)
+    return f"about {minutes}m" if remainder < 30 else f"about {minutes}m {remainder // 10 * 10}s"
+
+
 def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
     """Render a compact, accessible job pipeline from the API's live stage text."""
     stages=(
@@ -555,11 +567,21 @@ def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
         depth=int(queue.get("queue_depth", 0))
         queue_note=f" · {ahead} ahead / depth {depth}"
     detail=status.get("error_message") if failed else current_stage
+    timing=status.get("timing") or {}
+    timing_note=""
+    if not completed and not failed:
+        remaining=timing.get("estimated_remaining_seconds")
+        stage_eta=timing.get("current_stage_eta_seconds")
+        if queued:
+            timing_note=f"Estimated queue and generation time: {_duration_label(remaining)}"
+        elif remaining is not None:
+            timing_note=f"Estimated remaining: {_duration_label(remaining)} · current stage typically {_duration_label(stage_eta)}"
     st.markdown(
         f'''<section class="agent-pipeline" style="--agent-count:{len(stages)}">
           <div class="agent-pipeline__header"><div><div class="agent-pipeline__eyebrow">Agent pipeline</div><div class="agent-pipeline__summary">{html.escape(summary)}</div></div><div class="agent-pipeline__count">{completed_count}/{len(stages)} complete</div></div>
           <div class="agent-pipeline__rail">{stages_html}</div>
           <div class="agent-pipeline__footer"><div class="agent-pipeline__current">{html.escape(str(detail or "Waiting to start"))}</div><span class="agent-pipeline__state {state_class}"><i></i>{state_label}{queue_note}</span></div>
+          {f'<div class="agent-pipeline__timing">{html.escape(timing_note)} · estimate only; provider and queue time can vary.</div>' if timing_note else ''}
         </section>''',
         unsafe_allow_html=True,
     )
@@ -820,7 +842,7 @@ if job:=st.session_state.get("job"):
                     for item in slide["elements"]: st.markdown(f"- **{item.get('heading') or 'Insight'}** — {item.get('body') or ''}")
             st.link_button("Download editable PPTX",f"{API}/api/presentations/{job['presentation_id']}/download?slideweaver_session={st.session_state.access_session_id}")
         elif status["status"] in {"QUEUED", "RUNNING"}:
-            st.caption("Generation is running. This page refreshes automatically every two seconds; you may also leave and return later.")
+            st.caption("Generation is in progress. Keep this window open and avoid manually refreshing it. The page refreshes status automatically every two seconds; if a refresh happens, SlideWeaver will try to reconnect to the active job.")
             time.sleep(2)
             st.rerun()
     except (httpx.HTTPError, KeyError, ValueError): st.warning("Waiting for job status…")

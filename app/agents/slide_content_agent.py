@@ -44,10 +44,13 @@ class SlideContentAgent:
             # IDs, headings, and the user's seed detail are authoritative;
             # the cloud agent may improve the explanatory copy only.
             merged=element.model_dump()
-            if directive.nested_bullets:
+            if directive.nested_bullets or (
+                directive.native_diagram and directive.layout_type == LayoutType.architecture_layers
+            ):
                 # Nested technical statements came directly from the user.
-                # They are source data, not optional model copy, and must
-                # survive even if the provider emits a flat element list.
+                # Architecture layer service names are source data as well,
+                # not optional model copy. Both must survive even if the
+                # provider emits a simplified or generic element list.
                 preserved.append(merged)
                 continue
             if element.type == "metric" and element.value:

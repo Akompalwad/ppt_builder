@@ -171,7 +171,11 @@ def add_bullets(slide, points: list[str], x, y, w, h, d):
     return box
 
 def header(slide, spec: SlideSpec, d):
-    add_shape(slide, MSO_AUTO_SHAPE_TYPE.RECTANGLE, 0, 0, W, .10, d.primary_color)
+    # Industrial briefs explicitly reserve amber for high-visibility accents.
+    # Give that contractual accent a consistent, visible role while retaining
+    # the established primary-colour rule for all other themes.
+    top_accent=d.accent_color if d.name == "Industrial Steel" else d.primary_color
+    add_shape(slide, MSO_AUTO_SHAPE_TYPE.RECTANGLE, 0, 0, W, .10, top_accent)
     # Keep the title clear of the icon and slide number.  A slightly more
     # conservative fixed cap produces the same result across PowerPoint,
     # Keynote, and LibreOffice, whose font metrics differ from a browser.
@@ -315,7 +319,14 @@ def workflow(slide, spec, d):
         heading_h=.52 if rows > 1 else .78
         body_y=heading_y+heading_h+.16
         add_text(slide,heading,x+.14,heading_y,width-.28,heading_h,text_size(heading,heading_size,width-.28),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        add_text(slide,element_text(item),x+.16,body_y,width-.32,max(.30,y+stage_h-body_y-.16),text_size(element_text(item),body_size,width-.32),d.text_secondary,align=PP_ALIGN.CENTER)
+        # Dense native diagrams communicate architecture through editable
+        # labelled nodes and connectors. A paragraph inside every node makes
+        # the diagram unreadable and creates text clipping in PowerPoint.
+        # Keep the supplied component labels visible; detailed explanation
+        # belongs on a companion layer or in speaker notes.
+        show_body=not (spec.visual_spec.get("native_diagram") and count > 4)
+        if show_body:
+            add_text(slide,element_text(item),x+.16,body_y,width-.32,max(.30,y+stage_h-body_y-.16),text_size(element_text(item),body_size,width-.32),d.text_secondary,align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
     """A compact, connected process composition for an explicit workflow.

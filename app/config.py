@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: float = 120.0
     gemini_debug_responses: bool = False
     gemini_max_output_tokens: int = 800
+    # When deterministic parsing cannot recognise a natural-language agenda,
+    # Gemini/NVIDIA may classify it into a protected brief before generation.
+    # This uses one bounded call only and never replaces a recognised contract.
+    llm_brief_classification_enabled: bool = True
     # Configured from the rate limits shown in Google AI Studio. The gate uses
     # a shared rolling 60-second budget across all local generation jobs.
     gemini_tokens_per_minute: int = 16000

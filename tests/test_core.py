@@ -115,6 +115,31 @@ def test_prose_constraints_preserve_timeline_concepts_and_final_count():
     assert final.layout_type == LayoutType.feature_grid and final.exact_element_count == 4
     assert final.story_stage == "industry impact"
 
+def test_executive_prose_agenda_preserves_native_diagrams_table_and_theme():
+    prompt='''Enterprise Autonomous Supply Chain & Risk Control Deck
+Title slide featuring a dynamic subtitle and bold value proposition statement.
+Executive thesis — mapping the shift from reactive supply chain management to predictive, self-healing, autonomous multi-tier fulfillment networks.
+Current state vulnerability map — dissecting single-source dependencies, geopolitical supply shocks, opaque tier-2/tier-3 supplier visibility, and high carrying costs.
+High-level solution architecture flowchart showing ERP integration → real-time telemetry ingestion → LLM-driven supply graph → autonomous agent dispatcher → warehouse & logistics execution APIs.
+End-to-end multi-agent orchestration sequence: ingestion agent, risk assessor agent, inventory rebalancing planner, procurement negotiation agent, and human-in-the-loop oversight gate.
+Detailed enterprise data pipeline architecture mapping edge IoT sensors, SAP/Oracle connectors, Kafka event streaming, Snowflake data warehouse, and vector embeddings for semantic supplier search.
+Security, compliance, and zero-trust framework detailing supply chain data isolation, supplier credential management, end-to-end encryption, and regulatory trade compliance guardrails.
+Resilience, fault tolerance, and disaster recovery strategy covering multi-region active-active clusters, automated failover, data replication lag limits, and chaos engineering protocols.
+Comprehensive capability matrix comparing manual planning, basic automation, and autonomous multi-agent systems across cost reduction, lead time, and risk mitigation.
+Phased enterprise transformation roadmap divided into digital twin discovery, predictive pilot, automated orchestration, and fully autonomous self-optimizing operations.
+Use an industrial-tech color scheme featuring deep slate gray, steel blue, and high-visibility amber accent highlights.'''
+    agent=BriefInterpreterAgent(); brief=agent.interpret(prompt, requested_count=6)
+    assert agent.classify(prompt).mode == "structured"
+    assert brief.deck_title == "Enterprise Autonomous Supply Chain & Risk Control"
+    assert len(brief.slides) == 10
+    assert [item.heading for item in brief.by_number(4).elements] == [
+        "ERP integration", "real-time telemetry ingestion", "LLM-driven supply graph",
+        "autonomous agent dispatcher", "warehouse & logistics execution APIs",
+    ]
+    matrix=brief.by_number(9)
+    assert matrix.table_data["rows"][2] == ["autonomous multi-agent systems", "High", "Short", "Predictive"]
+    assert resolve_theme("Auto", prompt).name == "Industrial Steel"
+
 def test_structured_stress_brief_keeps_native_table_and_five_step_roadmap(tmp_path):
     prompt='''Create an intensive 6-slide deck. Slide 1: Title Slide. The title must be a long phrase: "Project Hyperion: Scaling Global Microservices Infrastructure". Slide 2: The Core Issue. Summarize this into 3 distinct detailed bullet points. Slide 3: System Component Comparison. Generate a 4x4 markdown table. Columns: [Service Name, Current Latency (ms), Target Latency (ms), Risk Level]. Row 1: [AuthGate API Gateway, 450ms, <15ms, Critical Risk / High Priority]. Row 2: [DataStream Ledger Sync, 1,200ms, <50ms, High Risk / Complex Migration]. Row 3: [NotifyEngine PubSub, 85ms, <10ms, Low Risk / Fast Win]. Slide 4: Migration Timeline. A horizontal 5-step engineering roadmap sequence. Step 1: Discovery & Audit, Step 2: Protocol Definition & RFC, Step 3: Canary Deployments in Sandbox, Step 4: Multi-Region Traffic Cutover, Step 5: Legacy Decommissioning & Cleanup. Slide 5: Critical Metrics. Display 3 distinct large percentage metrics side-by-side: 99.999% (Label: Targeted Uptime SLA), -85% (Label: Reduction in P99 API Latency), and $4.2M (Label: Projected Annual Savings). Slide 6: Emergency Contacts. Include an On-Call Matrix with varying contact lengths.'''
     brief=BriefInterpreterAgent().interpret(prompt, requested_count=6)
@@ -474,6 +499,86 @@ def test_brief_interpreter_preserves_compact_prose_slide_agenda():
         "Users", "AI application", "Agent orchestration", "RAG", "LLM", "Enterprise systems",
     ]
     assert brief.by_number(6).native_diagram is True
+
+def test_brief_interpreter_preserves_an_agenda_pasted_without_slides_heading():
+    """A partial clipboard selection can omit the preamble and `Slides:` label."""
+    prompt='''Title slide with a concise value proposition.
+Business problem — fragmented enterprise knowledge, manual workflows, slow decision-making, and hallucination risks.
+Proposed solution — show a high-level architecture diagram from users → AI application → agent orchestration → RAG → LLM → enterprise systems.
+Detailed RAG pipeline showing ingestion, document processing, chunking, embeddings, vector storage, retrieval, reranking, prompt construction, and generation.
+Agentic workflow showing planner, specialized agents, tool calling, memory, validation, and human approval.
+Azure-based deployment architecture using API Management, App Services/AKS, Azure Functions, Service Bus, Blob Storage, Azure AI Search, Key Vault, Application Insights, and Azure OpenAI.
+Security architecture covering Managed Identity, RBAC, network isolation, secrets management, PII protection, prompt injection protection, and audit logging.
+Scalability and reliability architecture covering horizontal scaling, queues, caching, circuit breakers, retries, dead-letter queues, and observability.
+Cost optimization table comparing major infrastructure components and optimization strategies.
+Implementation roadmap divided into MVP, production hardening, enterprise rollout, and autonomous-agent phase.
+
+Use native editable PowerPoint shapes, connectors, text boxes, tables, and diagrams.'''
+    agent=BriefInterpreterAgent()
+    brief=agent.interpret(prompt, requested_count=10)
+    assert agent.classify(prompt).mode == "structured"
+    assert len(brief.slides) == 10
+    assert brief.by_number(4).layout_type == LayoutType.process_flow
+    assert brief.by_number(9).table_data is not None
+    assert brief.by_number(10).native_diagram is True
+    assert [item.heading for item in brief.by_number(10).elements] == [
+        "MVP", "production hardening", "enterprise rollout", "autonomous-agent phase",
+    ]
+
+def test_native_architecture_layers_keep_supplied_service_names():
+    brief=BriefInterpreterAgent().interpret(
+        """Slides:
+Title slide with a concise value proposition.
+Business problem — fragmented enterprise knowledge, manual workflows, slow decision-making, and hallucination risks.
+Proposed solution — show a high-level architecture diagram from users → AI application → agent orchestration → RAG → LLM → enterprise systems.
+Azure-based deployment architecture using API Management, App Services/AKS, Azure Functions, Service Bus, Blob Storage, Azure AI Search, Key Vault, Application Insights, and Azure OpenAI.""",
+        requested_count=4,
+    )
+    directive=brief.by_number(4)
+    generated={"elements":[{"heading":"API and application", "body":"Generic provider summary"}]}
+    preserved=SlideContentAgent._preserve_contract_elements(directive, generated)
+    assert preserved[0]["body"] == "API Management\nApp Services / AKS"
+    assert preserved[2]["body"] == "Blob Storage\nAzure AI Search\nAzure OpenAI"
+
+def test_model_brief_promotes_an_implicit_executive_agenda_to_contracts():
+    payload={
+        "mode":"structured", "confidence":0.94, "reason":"Ten ordered slide intents were supplied.",
+        "deck_title":"Enterprise Autonomous Supply Chain & Risk Control",
+        "slides":[
+            {"slide_number":1,"title":"Supply chain risk control","layout_type":"title_slide","requirements":[],"elements":[],"native_diagram":False,"content_instruction":""},
+            {"slide_number":2,"title":"Executive thesis","layout_type":"section_slide","requirements":["Predictive fulfillment"],"elements":[],"native_diagram":False,"content_instruction":""},
+            {"slide_number":3,"title":"Risk map","layout_type":"feature_grid","requirements":["Single-source dependencies"],"elements":[],"native_diagram":False,"content_instruction":""},
+            {"slide_number":4,"title":"Solution architecture","layout_type":"process_flow","requirements":["ERP integration","Telemetry ingestion","LLM supply graph"],"elements":[],"native_diagram":True,"content_instruction":"Editable native flow"},
+        ],
+    }
+    brief, classification=BriefInterpreterAgent._model_brief(payload, requested_count=4)
+    assert brief is not None and classification is not None
+    assert classification.mode == "structured"
+    assert brief.deck_title == "Enterprise Autonomous Supply Chain & Risk Control"
+    assert brief.by_number(4).native_diagram is True
+    assert brief.by_number(4).layout_type == LayoutType.process_flow
+
+def test_model_brief_never_iterates_a_scalar_requirement_by_character():
+    payload={
+        "mode":"structured", "confidence":.9, "reason":"agenda", "deck_title":"Supply chain",
+        "slides":[
+            {"slide_number":1,"title":"Cover","layout_type":"title_slide","requirements":[],"elements":[],"native_diagram":False},
+            {"slide_number":2,"title":"Risk map","layout_type":"feature_grid","requirements":"Single-source dependencies","elements":[],"native_diagram":False},
+            {"slide_number":3,"title":"Roadmap","layout_type":"process_flow","requirements":["Pilot"],"elements":[],"native_diagram":True},
+        ],
+    }
+    brief, _=BriefInterpreterAgent._model_brief(payload, requested_count=3)
+    assert brief is not None
+    assert brief.by_number(2).requirements == ["Single-source dependencies"]
+
+def test_model_brief_rejects_a_slide_count_that_disagrees_with_the_user():
+    payload={"mode":"structured","confidence":.9,"slides":[
+        {"slide_number":1,"title":"One","layout_type":"title_slide"},
+        {"slide_number":2,"title":"Two","layout_type":"feature_grid"},
+        {"slide_number":3,"title":"Three","layout_type":"summary"},
+    ]}
+    brief, classification=BriefInterpreterAgent._model_brief(payload, requested_count=4)
+    assert brief is None and classification is None
 
 def test_brief_contract_overrides_the_default_slide_slider_up_to_ten():
     prompt="\n".join(
