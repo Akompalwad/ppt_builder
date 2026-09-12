@@ -544,15 +544,6 @@ with st.sidebar:
             admin_activity()
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
             about_slideweaver()
-        st.markdown(
-            f'''<a href="{GITHUB_PROFILE_URL}" target="_blank" rel="noopener noreferrer"
-            aria-label="GitHub profile: Akompalwad"
-            style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:2.6rem;box-sizing:border-box;padding:.5rem .75rem;
-            border:1px solid rgba(70,232,211,.40);border-radius:.65rem;color:#e8ffff;text-decoration:none;font-weight:600;
-            background:linear-gradient(110deg,rgba(31,82,103,.50),rgba(32,43,92,.54));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 22px rgba(0,0,0,.18);">
-            <img src="https://github.githubassets.com/favicons/favicon.svg" alt="GitHub" width="18" height="18">Akompalwad</a>''',
-            unsafe_allow_html=True,
-        )
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy", key="topic_input")
 if st.button("Generate presentation",type="primary",disabled=not topic.strip()):
     try:
