@@ -9,6 +9,12 @@ router=APIRouter(prefix="/api/presentations",tags=["presentations"]); service=Pr
 @router.get("/")
 def list_presentations(session_id: str = Depends(require_active_session)):
     return service.list_for_current_user(session_id)
+@router.get("/active-job")
+def active_job(session_id: str = Depends(require_active_session)):
+    result=service.active_job_for_current_user(session_id)
+    if not result:
+        raise HTTPException(404, "No active generation job")
+    return result
 @router.post("")
 def create(request:CreatePresentationRequest, tasks:BackgroundTasks, session_id: str = Depends(require_active_session)):
     presentation_id,job_id=service.create(request,session_id); tasks.add_task(service.generate,presentation_id,job_id,request); return {"presentation_id":presentation_id,"job_id":job_id}

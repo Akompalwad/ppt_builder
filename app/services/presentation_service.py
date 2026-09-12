@@ -48,6 +48,22 @@ class PresentationService:
                     "file_expires_at":metadata.get("file_expires_at"),
                 })
             return history
+    def active_job_for_current_user(self, session_id: str) -> dict | None:
+        """Return the newest unfinished generation job for the signed-in user."""
+        with SessionLocal() as db:
+            user=self._user(db,session_id)
+            job=db.scalar(
+                select(GenerationJob)
+                .join(Presentation, GenerationJob.presentation_id == Presentation.id)
+                .where(
+                    Presentation.user_id == user.id,
+                    GenerationJob.status.in_(("QUEUED", "RUNNING")),
+                    GenerationJob.job_type == "generate",
+                )
+                .order_by(GenerationJob.created_at.desc())
+            )
+            job_id=job.id if job else None
+        return self.job(job_id, session_id) if job_id else None
     def generate(self,presentation_id:str,job_id:str,request:CreatePresentationRequest):
         # The job remains QUEUED in the database until it receives its fair
         # slot. This prevents multiple users from exhausting one shared model

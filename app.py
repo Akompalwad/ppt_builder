@@ -493,6 +493,17 @@ try:
 except httpx.HTTPError:
     st.error("Could not verify testing access. Start the API and try again.")
     st.stop()
+# A refresh creates a new Streamlit session, while a generation continues in
+# FastAPI's worker. Reattach the newest unfinished job for this signed-in user
+# so the live agent pipeline and queue status immediately return.
+if "job" not in st.session_state:
+    try:
+        active_job_response=httpx.get(f"{API}/api/presentations/active-job", headers=ACCESS_HEADERS, timeout=5)
+        if active_job_response.status_code == 200:
+            active_job=active_job_response.json()
+            st.session_state.job={"presentation_id":active_job["presentation_id"], "job_id":active_job["id"]}
+    except (httpx.HTTPError, KeyError, ValueError):
+        pass
 with st.sidebar:
     st.markdown("""<div class="sidebar-console"><div class="label">AI PRESENTATION STUDIO</div><div class="name">SLIDEWEAVER</div><div class="status"><span class="dot"></span>SYSTEM READY</div></div>""", unsafe_allow_html=True)
     if auth_info.get("authenticated"):
