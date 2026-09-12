@@ -45,6 +45,13 @@ st.markdown("""
     background: linear-gradient(105deg, #137a81, #3149ad);
     box-shadow: 0 9px 28px rgba(23, 196, 192, .23);
   }
+  [data-testid="stAppViewContainer"] [data-testid="stButton"] > button[kind="primary"]:disabled {
+    opacity:1 !important;
+    color:#f5f7fa !important;
+    border:1px solid rgba(255,255,255,.76) !important;
+    background:linear-gradient(135deg, #050505, #202020) !important;
+    box-shadow:none !important;
+  }
   [data-testid="stAppViewContainer"] [data-testid="stExpander"],
   [data-testid="stAppViewContainer"] [data-testid="stVerticalBlockBorderWrapper"] {
     background: rgba(12, 27, 45, .56);
@@ -623,7 +630,7 @@ if "job" not in st.session_state:
         active_job_response=httpx.get(f"{API}/api/presentations/active-job", headers=ACCESS_HEADERS, timeout=5)
         if active_job_response.status_code == 200:
             active_job=active_job_response.json()
-            st.session_state.job={"presentation_id":active_job["presentation_id"], "job_id":active_job["id"]}
+            st.session_state.job={"presentation_id":active_job["presentation_id"], "job_id":active_job["id"], "status":active_job.get("status")}
     except (httpx.HTTPError, KeyError, ValueError):
         pass
 with st.sidebar:
@@ -679,7 +686,20 @@ with st.sidebar:
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
             about_slideweaver()
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy", key="topic_input")
-if st.button("Generate presentation",type="primary",disabled=not topic.strip() or count is None):
+missing_generation_inputs=[]
+if not topic.strip():
+    missing_generation_inputs.append("a presentation prompt")
+if count is None:
+    missing_generation_inputs.append("the required number of slides in the sidebar")
+current_job=st.session_state.get("job") or {}
+job_in_progress=str(current_job.get("status") or "").upper() in {"QUEUED", "RUNNING"}
+if job_in_progress:
+    generate_help="A presentation is currently queued or generating. Wait for it to finish before starting another one."
+elif missing_generation_inputs:
+    generate_help="Enter " + " and ".join(missing_generation_inputs) + " to generate a presentation."
+else:
+    generate_help="Generate an editable PowerPoint presentation."
+if st.button("Generate presentation",type="primary",disabled=bool(missing_generation_inputs) or job_in_progress,help=generate_help):
     try:
         if provider in {"NVIDIA", "Gemini"}:
             provider_id=provider.lower()
@@ -687,7 +707,7 @@ if st.button("Generate presentation",type="primary",disabled=not topic.strip() o
             if check.status_code != 200:
                 st.error(f"{provider} is unavailable or the selected model is not enabled. No job was started.")
                 st.stop()
-        r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":int(count),"theme":theme,"provider":provider.lower(),"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job=r.json()
+        r=httpx.post(f"{API}/api/presentations",json={"topic":topic,"slide_count":int(count),"theme":theme,"provider":provider.lower(),"audience":audience,"tone":tone,"include_external_images":include_images},headers=ACCESS_HEADERS,timeout=10); r.raise_for_status(); st.session_state.job={**r.json(), "status":"QUEUED"}
     except httpx.HTTPStatusError as exc:
         # A validation error (for example a malformed structured brief) is a
         # reachable API returning useful feedback, not a connectivity failure.
@@ -708,6 +728,8 @@ if job:=st.session_state.get("job"):
         else:
             opened=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS,timeout=5).json()
             status={"status":opened["status"],"progress":100 if opened["status"]=="COMPLETED" else 0,"current_stage":opened["status"]}
+        job["status"]=status.get("status")
+        st.session_state.job=job
         render_agent_pipeline(status)
         if status["status"]=="COMPLETED":
             deck=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS).json(); st.success("Presentation ready")
