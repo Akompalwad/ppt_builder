@@ -594,6 +594,16 @@ def presentation_library(history: list[dict]):
                     unsafe_allow_html=True,
                 )
                 if action.button("Open", key=f"open_library_{item['id']}", use_container_width=True):
+                    # Fetch through the owner-authorized presentation endpoint
+                    # rather than putting prompts into the history-list API.
+                    try:
+                        opened=httpx.get(f"{API}/api/presentations/{item['id']}", headers=ACCESS_HEADERS, timeout=5)
+                        opened.raise_for_status()
+                        original_prompt=opened.json().get("topic")
+                        if isinstance(original_prompt, str) and original_prompt.strip():
+                            st.session_state.topic_input=original_prompt
+                    except (httpx.HTTPError, ValueError):
+                        st.warning("The deck opened, but its original prompt could not be restored.")
                     st.session_state.job={"presentation_id":item["id"]}
                     st.rerun()
 try:
