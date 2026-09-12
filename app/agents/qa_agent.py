@@ -166,12 +166,17 @@ class PresentationQAAgent:
                 if element.label and not locked: element.label=summarize_point(element.label,6)
                 if element.body:
                     raw_body=element.body
-                    if slide.visual_spec.get("nested_bullets"):
+                    # Service names and diagram node labels are source data,
+                    # not prose. Summarising them can erase line-separated
+                    # values such as "API Management\nApp Services / AKS".
+                    if locked and slide.visual_spec.get("native_diagram"):
+                        element.body=raw_body
+                    elif slide.visual_spec.get("nested_bullets"):
                         sentences=[part.strip() for part in re.split(r"(?<=[.!?])\s*", raw_body) if part.strip()]
                         element.body="\n".join(filter(None, (summarize_point(part,13) for part in sentences[:2])))
                     else:
                         element.body=summarize_point(raw_body,budget)
-                    if _is_unusable_lead(raw_body) and not (locked and slide.visual_spec.get("nested_bullets")):
+                    if _is_unusable_lead(raw_body) and not locked:
                         element.body=summarize_point(element.subtext or element.value or "",budget)
                         issues.append(f"Slide {slide.slide_number}: removed incomplete element copy")
                 if element.subtext: element.subtext=summarize_point(element.subtext,budget)

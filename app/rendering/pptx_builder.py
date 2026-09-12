@@ -274,7 +274,9 @@ def workflow(slide, spec, d):
     """Connected native stages, with a readable two-row mode for dense flows."""
     items=spec.elements[:10]
     count=max(1,len(items))
-    columns=min(5, count)
+    # Six-stage architectures read more naturally as two balanced rows of
+    # three; five-plus-one leaves an accidental empty row.
+    columns=3 if count == 6 else min(5, count)
     rows=(count+columns-1)//columns
     gap_x=.18 if columns >= 5 else .28
     gap_y=.24
@@ -293,9 +295,13 @@ def workflow(slide, spec, d):
         nx,ny,*_=nodes[index+1]
         if row == nodes[index+1][4]:
             start=(x+width+.025,y+stage_h/2); end=(nx-.025,ny+stage_h/2)
+            connector_type=MSO_CONNECTOR.STRAIGHT
         else:
+            # An elbow makes the row break explicit instead of drawing a
+            # misleading diagonal across the whole workflow.
             start=(x+width/2,y+stage_h+.02); end=(nx+width/2,ny-.02)
-        connector=slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(start[0]), Inches(start[1]), Inches(end[0]), Inches(end[1]))
+            connector_type=MSO_CONNECTOR.ELBOW
+        connector=slide.shapes.add_connector(connector_type, Inches(start[0]), Inches(start[1]), Inches(end[0]), Inches(end[1]))
         connector.line.color.rgb=rgb(d.primary_color); connector.line.width=Pt(1.35)
     for x,y,item,index,_row,_column in nodes:
         add_surface(slide,x,y,width,stage_h,d,emphasis=index==0)
@@ -392,7 +398,14 @@ def architecture(slide, spec, d):
     for x,y,width,item,i in layers:
         add_surface(slide,x,y,width,layer_h,d,emphasis=i==0)
         add_text(slide,item.heading or f"Layer {i+1}",x+.30,y+.18,width-.60,.30,text_size(item.heading or "",19,width-.60),d.primary_color,True,font=d.font_heading)
-        if spec.visual_spec.get("nested_bullets"):
+        if spec.visual_spec.get("native_diagram"):
+            points=bullet_points(item, 3)
+            for point_index, point in enumerate(points):
+                add_text(
+                    slide, f"• {point}", x+.32, y+.51+point_index*.15,
+                    width-.64, .14, 10, d.text_secondary,
+                )
+        elif spec.visual_spec.get("nested_bullets"):
             add_bullets(slide,bullet_points(item,2),x+.36,y+.56,width-.72,layer_h-.70,d)
         else:
             add_text(slide,element_text(item),x+.32,y+.60,width-.64,layer_h-.76,text_size(element_text(item),15,width-.64),d.text_secondary)
