@@ -54,3 +54,17 @@ cd /home/opc/code/ppt_builder
 git fetch origin
 git reset --hard origin/main
 sudo systemctl restart slideweaver-api slideweaver-ui
+
+
+
+
+From the app directory:
+cd /home/opc/code/ppt_builder
+source .venv/bin/activate
+Remove only old anonymous/testing sessions:
+python -c "import sqlite3; db=sqlite3.connect('storage/presentations.db'); cur=db.execute('DELETE FROM active_access_sessions WHERE id NOT IN (SELECT session_id FROM oauth_sessions)'); db.commit(); print(f'Removed {cur.rowcount} stale session(s).')"
+Check active Google sessions:
+python -c "import sqlite3; db=sqlite3.connect('storage/presentations.db'); print(db.execute('SELECT COUNT(*) FROM active_access_sessions a JOIN oauth_sessions o ON o.session_id=a.id').fetchone()[0])"
+To reset every active-session slot:
+python -c "import sqlite3; db=sqlite3.connect('storage/presentations.db'); cur=db.execute('DELETE FROM active_access_sessions'); db.commit(); print(f'Removed {cur.rowcount} active session(s).')"
+No service restart is needed.

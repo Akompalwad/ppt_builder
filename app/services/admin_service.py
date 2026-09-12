@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.models.database import ActiveAccessSession, FeedbackReport, GenerationJob, OAuthSession, Presentation, SessionLocal, User
+from app.models.database import ActiveAccessSession, FeedbackReport, GenerationJob, LoginAudit, OAuthSession, Presentation, SessionLocal, User
 
 
 def configured_admin_emails() -> set[str]:
@@ -77,3 +78,44 @@ def activity_snapshot() -> dict:
                 "has_screenshot":bool(report.screenshot_path),
             } for report in feedback],
         }
+
+
+def login_history(limit: int=100) -> list[dict]:
+    with SessionLocal() as db:
+        events=db.scalars(select(LoginAudit).order_by(LoginAudit.created_at.desc()).limit(limit)).all()
+        return [{"id":event.id, "email":event.email, "event":event.event, "created_at":event.created_at.isoformat()} for event in events]
+
+
+def _safe_feedback_screenshot(path_text: str | None) -> Path | None:
+    if not path_text:
+        return None
+    root=get_settings().feedback_storage_path.resolve()
+    path=Path(path_text).resolve()
+    return path if path.is_relative_to(root) else None
+
+
+def delete_feedback(feedback_id: str) -> bool:
+    with SessionLocal() as db:
+        report=db.get(FeedbackReport, feedback_id)
+        if not report:
+            return False
+        screenshot=_safe_feedback_screenshot(report.screenshot_path)
+        db.delete(report)
+        db.commit()
+    if screenshot:
+        screenshot.unlink(missing_ok=True)
+    return True
+
+
+def purge_old_feedback(days: int) -> int:
+    cutoff=datetime.utcnow()-timedelta(days=days)
+    with SessionLocal() as db:
+        reports=db.scalars(select(FeedbackReport).where(FeedbackReport.created_at < cutoff)).all()
+        screenshots=[_safe_feedback_screenshot(report.screenshot_path) for report in reports]
+        for report in reports:
+            db.delete(report)
+        db.commit()
+    for screenshot in screenshots:
+        if screenshot:
+            screenshot.unlink(missing_ok=True)
+    return len(reports)

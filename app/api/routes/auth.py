@@ -3,15 +3,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.models.database import ActiveAccessSession, OAuthCallbackTicket, OAuthLoginState, OAuthSession, SessionLocal, User
+from app.models.database import ActiveAccessSession, LoginAudit, OAuthCallbackTicket, OAuthLoginState, OAuthSession, SessionLocal, User
 from app.services.access_service import AccessService, LIMIT_MESSAGE
 from app.services.admin_service import configured_admin_emails
 
@@ -19,6 +19,7 @@ router=APIRouter(prefix="/api/auth", tags=["auth"])
 GOOGLE_AUTHORIZE_URL="https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL="https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL="https://openidconnect.googleapis.com/v1/userinfo"
+SESSION_COOKIE_NAME="slideweaver_session"
 
 
 def _configured() -> bool:
@@ -26,10 +27,49 @@ def _configured() -> bool:
     return bool(settings.google_client_id and settings.google_client_secret and settings.google_redirect_uri)
 
 
-def _public_redirect(*, ticket: str | None=None, error: str | None=None) -> RedirectResponse:
+def _public_redirect(*, ticket: str | None=None, error: str | None=None, session_id: str | None=None) -> RedirectResponse:
     settings=get_settings()
     query=urlencode({key:value for key, value in {"oauth_ticket":ticket, "auth_error":error}.items() if value})
-    return RedirectResponse(f"{settings.app_public_url.rstrip('/')}/?{query}" if query else settings.app_public_url.rstrip("/") + "/")
+    response=RedirectResponse(f"{settings.app_public_url.rstrip('/')}/?{query}" if query else settings.app_public_url.rstrip("/") + "/")
+    if session_id:
+        # The callback is a browser navigation, so this cookie reaches the
+        # browser unlike the server-side ticket exchange used by Streamlit.
+        # It lets a refreshed Streamlit session recover the OAuth session.
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=session_id,
+            max_age=settings.access_session_ttl_minutes * 60,
+            httponly=True,
+            secure=urlparse(settings.app_public_url).scheme == "https",
+            samesite="lax",
+            path="/",
+        )
+    return response
+
+
+def _revoke_session(session_id: str | None) -> None:
+    """Revoke one account's sessions, including its active-access rows."""
+    if not session_id:
+        return
+    with SessionLocal() as db:
+        oauth_session=db.get(OAuthSession, session_id)
+        if oauth_session:
+            # A Google account can have sessions from more than one tab or
+            # browser. Signing out revokes them all so Admin stays accurate.
+            session_ids=list(db.scalars(select(OAuthSession.session_id).where(OAuthSession.user_id == oauth_session.user_id)))
+            user=db.get(User, oauth_session.user_id)
+            if user:
+                db.add(LoginAudit(user_id=user.id, email=user.email, event="sign_out"))
+            for active_session_id in session_ids:
+                active_session=db.get(ActiveAccessSession, active_session_id)
+                if active_session:
+                    db.delete(active_session)
+            db.query(OAuthSession).filter(OAuthSession.user_id == oauth_session.user_id).delete()
+        else:
+            access_session=db.get(ActiveAccessSession, session_id)
+            if access_session:
+                db.delete(access_session)
+        db.commit()
 
 
 @router.get("/me")
@@ -110,8 +150,9 @@ def google_callback(code: str | None = Query(default=None), state: str | None = 
             db.add(user); db.flush()
         db.add(OAuthSession(session_id=session_id, user_id=user.id))
         db.add(OAuthCallbackTicket(ticket=ticket, session_id=session_id))
+        db.add(LoginAudit(user_id=user.id, email=user.email, event="sign_in"))
         db.commit()
-    return _public_redirect(ticket=ticket)
+    return _public_redirect(ticket=ticket, session_id=session_id)
 
 
 @router.post("/session")
@@ -130,22 +171,20 @@ def exchange_callback_ticket(ticket: str):
 
 @router.post("/logout")
 def logout(x_slideweaver_session: str | None = Header(default=None)):
-    if x_slideweaver_session:
-        with SessionLocal() as db:
-            oauth_session=db.get(OAuthSession, x_slideweaver_session)
-            if oauth_session:
-                # A Google account can have sessions from more than one tab or
-                # browser. Signing out must revoke them all, otherwise the
-                # Admin panel still correctly sees that account as active.
-                session_ids=list(db.scalars(select(OAuthSession.session_id).where(OAuthSession.user_id == oauth_session.user_id)))
-                for session_id in session_ids:
-                    active_session=db.get(ActiveAccessSession, session_id)
-                    if active_session:
-                        db.delete(active_session)
-                db.query(OAuthSession).filter(OAuthSession.user_id == oauth_session.user_id).delete()
-            else:
-                access_session=db.get(ActiveAccessSession, x_slideweaver_session)
-                if access_session:
-                    db.delete(access_session)
-            db.commit()
+    _revoke_session(x_slideweaver_session)
     return {"status":"logged_out"}
+
+
+@router.post("/logout/browser")
+def browser_logout(slideweaver_session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME)):
+    """Browser-originated sign-out so the HttpOnly session cookie is cleared."""
+    _revoke_session(slideweaver_session)
+    settings=get_settings()
+    response=RedirectResponse(settings.app_public_url.rstrip("/") + "/", status_code=303)
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        path="/",
+        secure=urlparse(settings.app_public_url).scheme == "https",
+        samesite="lax",
+    )
+    return response

@@ -1,49 +1,98 @@
 # SlideWeaver
 
-An asynchronous, version-ready Python (3.12) foundation for editable AI-generated PowerPoint decks.
+SlideWeaver is an asynchronous workspace for producing editable PowerPoint
+presentations from a prompt. It stores a versioned canonical presentation
+specification, renders a matching live web preview, and exports a native
+editable `.pptx`.
+
+## What it does
+
+- Generates 3–10 slide decks with **Gemini** or **NVIDIA NIM** from the UI.
+- Uses a Brief Interpreter, Theme, Storyline, Slide Content, Design Director,
+  Visual Asset, QA, and PPTX rendering pipeline.
+- Shows a live pipeline rail for queued, running, completed, and failed work.
+- Maintains a single-server FIFO generation queue and reports queue position
+  and depth to every user.
+- Supports slide-specific edits. Requests to relayout columns, change font
+  size, shorten copy, add an image, or change structure reuse the existing
+  slide content where appropriate and rebuild the live preview and `.pptx`.
+- Creates editable native PowerPoint layouts, tables, diagrams, transitions,
+  and a restrained set of story-aware entrance animations.
+- Supports topic-specific Unsplash images when configured, or an OpenAI image
+  provider when explicitly selected on the server.
+- Applies text-fit and copy QA rules to avoid overflow, duplicate metric
+  labels, clipped sentences, and internal planning text leaking onto slides.
 
 ## Run locally
 
+Python 3.12 is required.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python api_server.py
 # in another terminal
 streamlit run app.py
 ```
 
-The default mock provider needs no API key and produces a deterministic deck. The API stores canonical `PresentationSpec` JSON and a native editable `.pptx` in `storage/`.
+Copy `.env.example` to `.env` and configure at least one cloud provider before
+generating a deck. The UI intentionally exposes only **Gemini** and **NVIDIA**.
+Ollama is a server-side, opt-in contingency (`OLLAMA_FALLBACK_ENABLED=false` by
+default); it is not shown as a user-selectable model.
 
-## NVIDIA NIM
+## Configuration
 
-Create an NVIDIA developer API key at [build.nvidia.com](https://build.nvidia.com), copy `.env.example` to `.env`, then set `NVIDIA_API_KEY`. Choose **NVIDIA** in the UI. The default `nvidia/nemotron-3-super-120b-a12b` has been verified callable for this account and returns clean instruction output. If NVIDIA is unavailable or returns invalid output, SlideWeaver safely uses its local fallback generator.
+Important settings in `.env`:
 
-To test which curated, presentation-relevant NVIDIA catalog models are callable for your account, run `set -a; source .env; set +a; python scripts/check_nvidia_models.py`. Each probe is limited to 32 completion tokens.
+```bash
+# Providers and shared-rate-limit queue
+GEMINI_API_KEY=
+GEMINI_MODEL=gemma-4-26b-a4b-it
+GEMINI_TOKENS_PER_MINUTE=16000
+GEMINI_REQUESTS_PER_MINUTE=30
+NVIDIA_API_KEY=
+NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b
+GENERATION_MAX_CONCURRENT_JOBS=1
 
-## Topic-specific visuals
+# Image provider: "unsplash" is the normal stock-image choice
+IMAGE_PROVIDER=unsplash
+UNSPLASH_ACCESS_KEY=
+MAX_GENERATED_IMAGES_PER_DECK=3
 
-NVIDIA generates the slide-specific visual briefs and icon concepts. To generate raster visuals dynamically, configure a separate image-capable provider in `.env`: `IMAGE_PROVIDER=openai`, `IMAGE_API_KEY=...`, and optionally `IMAGE_MODEL=gpt-image-1`. Enable **Generate topic-specific visuals** in Streamlit. The Asset Service generates the cover plus up to two content visuals, stores them under the presentation's local asset directory, and records each outcome in the canonical spec. Without an image provider, no external image is generated.
+# Storage and retention
+FILE_RETENTION_HOURS=1
+CLEANUP_INTERVAL_MINUTES=10
+```
 
-### Unsplash
+The generation queue is in-process and suitable for one API process on one
+server. Redis is **not required** for this deployment mode. If the app is
+scaled to multiple API processes or hosts, use a shared queue and shared
+session/storage implementation first.
 
-Set `IMAGE_PROVIDER=unsplash` and `UNSPLASH_ACCESS_KEY` to the access key from your Unsplash developer application. NVIDIA turns each slide's intent into a concise Unsplash search query. SlideWeaver downloads the selected image, records its source URL, photographer, and Unsplash License in the versioned spec, and registers the download with Unsplash. Enable **Generate topic-specific visuals** when creating the deck.
+### Image sources
 
-## Architecture
+With `IMAGE_PROVIDER=unsplash` and `UNSPLASH_ACCESS_KEY` configured, the Asset
+Service chooses topic-specific search queries and records image provenance in
+the presentation metadata. The UI checkbox controls whether external visuals
+are requested for a deck.
 
-Streamlit calls FastAPI, which creates a persisted job and runs the orchestrator outside the UI request. The canonical Pydantic spec is versioned before the python-pptx renderer builds editable native shapes. Settings centralize configuration, leaving room for Oracle SQLAlchemy URLs and OCI storage adapters.
+Set `IMAGE_PROVIDER=openai`, `IMAGE_API_KEY`, and optionally `IMAGE_MODEL` to
+use a configured OpenAI image endpoint instead. If no image provider is ready,
+the deck continues with native editable visuals rather than failing.
 
-### Structured presentation briefs
+## Prompting and deck design
 
-SlideWeaver recognizes prompts that explicitly define slides using `Slide 1:`,
-`Title:`, `Subtitle:`, `Layout:`, and content lists such as `Topic Areas:`,
-`Steps to cover:`, `Tiers to cover:`, or `Key Outcomes:`. The Brief Interpreter
-turns these into protected slide contracts before the content, storyline, and
-design agents run. Explicit titles, layouts, and requested items are preserved
-even if a cloud provider is unavailable and deterministic generation is used.
+Plain-English prompts work well. SlideWeaver also preserves explicit contracts
+such as `Slide 1:`, `Title:`, `Subtitle:`, `Layout:`, `Topic Areas:`, `Steps to
+cover:`, `Tiers to cover:`, `Key Outcomes:`, tables, metrics, and roadmaps.
 
-For an editable native chart, include explicit comparable source data in the
-slide's JSON contract. SlideWeaver will not invent chart values from a single
-claim or target metric:
+The Design Director varies compositions by story role: comparisons, workflows,
+architecture layers, timelines, decision splits, metrics, tables, diagrams,
+and summary slides. Explicit slide requirements override a generic story arc.
+
+For native editable charts, supply comparable source data. SlideWeaver does not
+invent chart values from a claim or target metric alone:
 
 ```json
 "chart_data": {
@@ -53,49 +102,15 @@ claim or target metric:
 }
 ```
 
-The same source data renders as an editable PowerPoint chart and as a matching
-chart in the web preview.
+Charts are rendered as editable PowerPoint charts and as matching web-preview
+charts. PowerPoint element animations are intentionally capped to meaningful
+entrance sequences; they are not applied to every shape.
 
-## Deployment
+## Accounts and Google sign-in
 
-`docker compose up --build` starts API, Streamlit, and Redis. For OCI ARM64, use the same compose file on an Ampere VM, front it with Nginx, and use Autonomous Database and Object Storage credentials through environment variables. Never commit `.env`.
-
-### Oracle Cloud VM: Git-based updates
-
-Keep the application checkout on the VM as a Git clone. This makes releases
-repeatable and avoids copying individual source files to the server.
-
-One-time setup, from `/home/opc/code/ppt_builder` on the VM:
-
-```bash
-git remote -v
-git branch --show-current
-sudo systemctl enable --now slideweaver-api slideweaver-ui
-```
-
-For each release, push the committed change from your development machine,
-then update the VM checkout and restart the two services:
-
-```bash
-cd /home/opc/code/ppt_builder
-git pull --ff-only origin main
-source .venv/bin/activate
-pip install -r requirements.txt
-sudo systemctl restart slideweaver-api slideweaver-ui
-sudo systemctl status slideweaver-api slideweaver-ui --no-pager
-```
-
-Replace `main` with the branch configured on the server if it differs. Do not
-put API keys in Git: the VM's `.env` stays local to the server. If a release
-changes only Python source files, the dependency-install command is harmless;
-it is included so the same release procedure also handles future dependency
-changes.
-
-### Google sign-in
-
-SlideWeaver supports Google OAuth using the server-side authorization-code
-flow. Create a **Web application** OAuth client in Google Cloud Console and
-configure these values only in the VM's `.env` file:
+Testing mode uses a temporary browser session. To enable account-based deck
+history and Google sign-in, create a **Web application** OAuth client and set
+these values on the server only:
 
 ```bash
 AUTH_MODE=google
@@ -107,33 +122,75 @@ GOOGLE_REDIRECT_URI=https://slideweaver.duckdns.org/api/auth/google/callback
 ADMIN_EMAILS=your-google-account@example.com
 ```
 
-In Google Cloud Console, set the authorized JavaScript origin to
-`https://slideweaver.duckdns.org` and the authorized redirect URI to
-`https://slideweaver.duckdns.org/api/auth/google/callback`. Both HTTPS URL
-values must match exactly, including the path and any trailing slash rule.
-After saving `.env`, restart both services:
+Google Cloud Console must contain:
 
-```bash
-sudo systemctl restart slideweaver-api slideweaver-ui
+- Authorized JavaScript origin: `https://slideweaver.duckdns.org`
+- Authorized redirect URI:
+  `https://slideweaver.duckdns.org/api/auth/google/callback`
+
+The redirect URI must match exactly. The flow uses Google’s server-side
+authorization-code model and returns through a one-time ticket; an app session
+token is not placed in the callback URL. Signing out revokes every active app
+session for that Google account.
+
+`ADMIN_EMAILS` is a comma-separated allowlist of Google accounts. Admins can
+inspect active-user activity, sign-in/sign-out history recorded after this
+feature is deployed, feedback reports, and screenshots. They can run
+expiry-safe generated-file cleanup, delete individual feedback reports, or
+purge feedback older than a selected age. Feedback content, prompts, and
+screenshots are intentionally visible only to an allowlisted administrator.
+
+## Feedback
+
+The sidebar **Share feedback** form accepts a description, originating prompt,
+error details, optional reply email, and an optional PNG/JPEG screenshot up to
+3 MB. Reports are saved privately in the application database; screenshots are
+stored below `storage/feedback`.
+
+If Nginx fronts the application, its active server block must allow the encoded
+upload body:
+
+```nginx
+client_max_body_size 8m;
 ```
 
-OAuth-created sessions are tied to the verified Google account, so each person
-sees only their own presentation history. The testing browser-session mode
-remains available only while `AUTH_MODE=disabled`.
+Validate and reload after the change:
 
-`ADMIN_EMAILS` is a comma-separated allowlist of verified Google email
-addresses. Those accounts receive an **Admin activity** button in the sidebar
-with active-user count, recent activity, presentation count, and job status;
-it never exposes presentation content or prompts.
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
 
-With the **Auto** theme, SlideWeaver selects a topic-appropriate design system:
-security and SOC decks use *Security Signal*, investment/depository decks use
-*Investor Slate*, and AI/platform decks use *Aurora Tech*. The Storyline Agent
-also uses topic-specific story arcs, so decks on unrelated subjects do not
-default to the same cover → comparison → summary pattern.
+## Retention and cleanup
 
-## Generated-file retention
+`FILE_RETENTION_HOURS` controls how long generated PPTX files and downloaded
+assets remain available after generation or a slide edit. The default is one
+hour; use `48` for two-day production retention.
 
-`FILE_RETENTION_HOURS` controls how long generated PPTX files and image assets remain available after a successful generation or edit. The development default is `1`; set it to `48` for a two-day production lifetime. The Celery Beat service runs cleanup every ten minutes. Expired files are deleted from storage, downloads return HTTP 410, and editing/regenerating a presentation starts a fresh retention window.
+The FastAPI process performs expiry cleanup on startup and then every
+`CLEANUP_INTERVAL_MINUTES` (default `10`). Expired files are removed, downloads
+return HTTP 410, and a later edit/regeneration starts a new retention window.
+The Admin panel’s cleanup action removes only folders with a valid, expired
+lifecycle manifest; it never deletes unexpired decks.
 
-For direct local API runs, the FastAPI process also runs the same cleanup every `CLEANUP_INTERVAL_MINUTES` (default `10`), so the policy does not depend on Docker or Celery.
+## Deployment on the Oracle VM
+
+Keep the VM checkout as a Git clone. A single API service plus a single
+Streamlit service is the supported configuration.
+
+```bash
+cd /home/opc/code/ppt_builder
+git pull --ff-only origin main
+source .venv/bin/activate
+pip install -r requirements.txt
+sudo systemctl restart slideweaver-api slideweaver-ui
+sudo systemctl status slideweaver-api slideweaver-ui --no-pager
+```
+
+Nginx should proxy the public HTTPS origin to Streamlit and the `/api/` path to
+FastAPI. Keep `.env` only on the server; never commit OAuth client secrets,
+provider keys, or production database credentials.
+
+`docker compose up --build` remains available for containerized development.
+The compose file includes Redis for compatibility with earlier deployments, but
+the current single-server queue does not require it.

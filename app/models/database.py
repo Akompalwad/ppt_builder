@@ -17,6 +17,8 @@ class OAuthSession(Base):
     __tablename__="oauth_sessions"; session_id: Mapped[str]=mapped_column(String(64),primary_key=True); user_id: Mapped[str]=mapped_column(ForeignKey("users.id")); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class OAuthCallbackTicket(Base):
     __tablename__="oauth_callback_tickets"; ticket: Mapped[str]=mapped_column(String(64),primary_key=True); session_id: Mapped[str]=mapped_column(String(64)); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+class LoginAudit(Base):
+    __tablename__="login_audit"; id: Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid4())); user_id: Mapped[str]=mapped_column(ForeignKey("users.id")); email: Mapped[str]=mapped_column(String(255)); event: Mapped[str]=mapped_column(String(30)); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class Presentation(Base):
     __tablename__="presentations"; id: Mapped[str]=mapped_column(String(36),primary_key=True,default=lambda:str(uuid4())); user_id: Mapped[str]=mapped_column(ForeignKey("users.id")); title: Mapped[str]=mapped_column(String(500)); topic: Mapped[str]=mapped_column(String(2000)); status: Mapped[str]=mapped_column(String(40),default="QUEUED"); current_version_id: Mapped[str|None]=mapped_column(String(36),nullable=True); created_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow); updated_at: Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
 class PresentationVersion(Base):

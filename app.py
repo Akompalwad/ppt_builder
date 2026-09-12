@@ -10,6 +10,7 @@ API=os.getenv("API_URL","http://localhost:8000")
 PUBLIC_API_URL=os.getenv("PUBLIC_API_URL", API).rstrip("/")
 PROJECT_GITHUB_URL="https://github.com/Akompalwad/ppt_builder"
 GITHUB_PROFILE_URL="https://github.com/Akompalwad"
+SESSION_COOKIE_NAME="slideweaver_session"
 st.markdown("""
 <style>
   [data-testid="stAppViewContainer"] {
@@ -86,6 +87,15 @@ st.markdown("""
     box-shadow: 0 0 0 2px rgba(56,245,208,.13), 0 10px 26px rgba(0,0,0,.27);
     transform: translateY(-1px);
   }
+  .sidebar-logout-form { margin:.25rem 0 .8rem; }
+  .sidebar-logout-form button {
+    width:100%; min-height:2.6rem; box-sizing:border-box; cursor:pointer;
+    border:1px solid rgba(70, 232, 211, .40); border-radius:.65rem;
+    background:linear-gradient(110deg, rgba(31, 82, 103, .50), rgba(32, 43, 92, .54));
+    color:#e8ffff; font:inherit; font-weight:600;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.08), 0 8px 22px rgba(0,0,0,.18);
+  }
+  .sidebar-logout-form button:hover { border-color:#38f5d0; box-shadow:0 0 0 2px rgba(56,245,208,.13), 0 10px 26px rgba(0,0,0,.27); transform:translateY(-1px); }
   [data-testid="stSidebar"] hr { border-color: rgba(93, 225, 208, .24); }
   .sidebar-console {
     margin: -.55rem 0 1.3rem;
@@ -203,52 +213,93 @@ def admin_activity():
     except (httpx.HTTPError, ValueError):
         st.error("Admin activity is temporarily unavailable.")
         return
-    left, middle, right=st.columns(3)
-    left.metric("Active users", snapshot.get("active_users", 0))
-    middle.metric("Testing limit", snapshot.get("max_active_users", 0))
-    right.metric("Session window", f"{snapshot.get('session_ttl_minutes', 0)} min")
-    if st.button("↻  Refresh activity", use_container_width=True):
-        st.rerun()
-    users=snapshot.get("users", [])
-    if not users:
-        st.info("No active Google sessions right now.")
-        return
-    for user in users:
-        with st.container(border=True):
-            identity, activity=st.columns([1.1, 1])
-            identity.markdown(f"**{user.get('name') or 'Unknown user'}**")
-            identity.caption(user.get("email") or "")
-            activity.markdown(f"**{user.get('presentations', 0)}** presentations")
-            activity.caption(f"Last seen: {relative_time(user.get('last_seen_at'))}")
-            if latest:=user.get("latest_presentation"):
-                st.caption(f"Latest deck: {latest}")
-            if stage:=user.get("current_stage"):
-                status=(user.get("job_status") or "unknown").title()
-                st.caption(f"Latest job · {status}: {stage}")
-    st.divider()
-    feedback=snapshot.get("feedback", [])
-    st.subheader(f"Recent feedback ({len(feedback)})")
-    if not feedback:
-        st.caption("No feedback has been submitted yet.")
-    for report in feedback:
-        label=f"{str(report.get('category', 'feedback')).title()} · {relative_time(report.get('created_at'))}"
-        with st.expander(label):
-            st.write(report.get("message") or "")
-            if prompt:=report.get("prompt"):
-                st.markdown("**Prompt**")
-                st.code(prompt, language=None)
-            if error_details:=report.get("error_details"):
-                st.markdown("**Error details**")
-                st.code(error_details, language=None)
-            if reply_to:=report.get("reply_to"):
-                st.caption(f"Reply address: {reply_to}")
-            if report.get("has_screenshot"):
-                try:
-                    image=httpx.get(f"{API}/api/admin/feedback/{report['id']}/screenshot", headers=ACCESS_HEADERS, timeout=10)
-                    image.raise_for_status()
-                    st.image(image.content, caption="Submitted screenshot", use_container_width=True)
-                except httpx.HTTPError:
-                    st.warning("The submitted screenshot is no longer available.")
+    overview_tab, history_tab, feedback_tab=st.tabs(["Overview", "Sign-in history", "Feedback & storage"])
+    with overview_tab:
+        left, middle, right=st.columns(3)
+        left.metric("Active users", snapshot.get("active_users", 0))
+        middle.metric("Testing limit", snapshot.get("max_active_users", 0))
+        right.metric("Session window", f"{snapshot.get('session_ttl_minutes', 0)} min")
+        actions_left, actions_right=st.columns(2)
+        if actions_left.button("↻  Refresh activity", key="admin_refresh", use_container_width=True):
+            st.rerun()
+        if actions_right.button("Clean expired generated files", key="admin_cleanup_expired", use_container_width=True):
+            try:
+                cleaned=httpx.post(f"{API}/api/admin/cleanup-expired-files", headers=ACCESS_HEADERS, timeout=20)
+                cleaned.raise_for_status()
+                st.success(f"Removed {cleaned.json().get('removed', 0)} expired presentation folder(s).")
+            except httpx.HTTPError:
+                st.error("Expired-file cleanup could not be completed.")
+        users=snapshot.get("users", [])
+        if not users:
+            st.info("No active Google sessions right now.")
+        for user in users:
+            with st.container(border=True):
+                identity, activity=st.columns([1.1, 1])
+                identity.markdown(f"**{user.get('name') or 'Unknown user'}**")
+                identity.caption(user.get("email") or "")
+                activity.markdown(f"**{user.get('presentations', 0)}** presentations")
+                activity.caption(f"Last seen: {relative_time(user.get('last_seen_at'))}")
+                if latest:=user.get("latest_presentation"):
+                    st.caption(f"Latest deck: {latest}")
+                if stage:=user.get("current_stage"):
+                    status=(user.get("job_status") or "unknown").title()
+                    st.caption(f"Latest job · {status}: {stage}")
+    with history_tab:
+        st.caption("Successful Google sign-ins and explicit sign-outs. This history starts when the feature is deployed.")
+        try:
+            history_response=httpx.get(f"{API}/api/admin/login-history", headers=ACCESS_HEADERS, timeout=8)
+            history_response.raise_for_status()
+            history=history_response.json().get("events", [])
+        except (httpx.HTTPError, ValueError):
+            history=[]
+            st.warning("Sign-in history is temporarily unavailable.")
+        if not history:
+            st.info("No sign-in events have been recorded yet.")
+        for event in history:
+            symbol="↗" if event.get("event") == "sign_in" else "↙"
+            left, right=st.columns([3, 1])
+            left.markdown(f"{symbol} **{event.get('email', 'Unknown user')}** · {str(event.get('event', '')).replace('_', ' ').title()}")
+            right.caption(relative_time(event.get("created_at")))
+    with feedback_tab:
+        feedback=snapshot.get("feedback", [])
+        purge_days=st.selectbox("Delete feedback older than", [7, 30, 90, 180, 365], index=1, format_func=lambda days: f"{days} days", key="feedback_purge_days")
+        if st.button("Delete feedback older than selected age", key="admin_purge_feedback", use_container_width=True):
+            try:
+                purged=httpx.post(f"{API}/api/admin/feedback/purge", params={"older_than_days":purge_days}, headers=ACCESS_HEADERS, timeout=15)
+                purged.raise_for_status()
+                st.success(f"Deleted {purged.json().get('removed', 0)} old feedback report(s).")
+                st.rerun()
+            except httpx.HTTPError:
+                st.error("Old feedback could not be deleted.")
+        st.subheader(f"Recent feedback ({len(feedback)})")
+        if not feedback:
+            st.caption("No feedback has been submitted yet.")
+        for report in feedback:
+            label=f"{str(report.get('category', 'feedback')).title()} · {relative_time(report.get('created_at'))}"
+            with st.expander(label):
+                st.write(report.get("message") or "")
+                if prompt:=report.get("prompt"):
+                    st.markdown("**Prompt**")
+                    st.code(prompt, language=None)
+                if error_details:=report.get("error_details"):
+                    st.markdown("**Error details**")
+                    st.code(error_details, language=None)
+                if reply_to:=report.get("reply_to"):
+                    st.caption(f"Reply address: {reply_to}")
+                if report.get("has_screenshot"):
+                    try:
+                        image=httpx.get(f"{API}/api/admin/feedback/{report['id']}/screenshot", headers=ACCESS_HEADERS, timeout=10)
+                        image.raise_for_status()
+                        st.image(image.content, caption="Submitted screenshot", use_container_width=True)
+                    except httpx.HTTPError:
+                        st.warning("The submitted screenshot is no longer available.")
+                if st.button("Delete this feedback", key=f"admin_delete_feedback_{report['id']}"):
+                    try:
+                        deletion=httpx.delete(f"{API}/api/admin/feedback/{report['id']}", headers=ACCESS_HEADERS, timeout=10)
+                        deletion.raise_for_status()
+                        st.rerun()
+                    except httpx.HTTPError:
+                        st.error("This feedback could not be deleted.")
 
 if auth_error:=st.query_params.get("auth_error"):
     st.error(str(auth_error))
@@ -264,7 +315,14 @@ if oauth_ticket:=st.query_params.get("oauth_ticket"):
         st.error("Your Google sign-in could not be completed. Please try again.")
         del st.query_params["oauth_ticket"]
 if "access_session_id" not in st.session_state:
-    st.session_state.access_session_id=uuid.uuid4().hex
+    # Streamlit session state is intentionally ephemeral: a browser refresh
+    # creates a new session. The browser receives this HttpOnly cookie during
+    # the Google callback, so restore its existing authenticated API session.
+    try:
+        saved_session_id=st.context.cookies.get(SESSION_COOKIE_NAME)
+    except Exception:
+        saved_session_id=None
+    st.session_state.access_session_id=saved_session_id if saved_session_id else uuid.uuid4().hex
 ACCESS_HEADERS={"X-SlideWeaver-Session":st.session_state.access_session_id}
 try:
     auth_response=httpx.get(f"{API}/api/auth/me", headers=ACCESS_HEADERS, timeout=5)
@@ -283,7 +341,7 @@ if auth_info.get("mode", "").lower() == "google":
           <div class="signin-mark">S</div><div class="signin-eyebrow">AI presentation studio</div>
           <h1>Welcome to SlideWeaver</h1>
           <p>Create editable, polished presentations and return to every deck from your own workspace.</p>
-          <a class="signin-google" href="{sign_in_url}"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.22c0-.71-.06-1.39-.18-2.04H12v3.86h5.24a4.48 4.48 0 0 1-1.94 2.94v2.5h3.14c1.84-1.7 2.91-4.2 2.91-7.26Z"/><path fill="#34A853" d="M12 21.73c2.62 0 4.82-.87 6.38-2.35l-3.14-2.5c-.87.58-1.99.92-3.24.92-2.49 0-4.6-1.68-5.36-3.94H3.4v2.58A9.63 9.63 0 0 0 12 21.73Z"/><path fill="#FBBC05" d="M6.64 13.86A5.8 5.8 0 0 1 6.34 12c0-.64.11-1.26.3-1.86V7.56H3.4A9.7 9.7 0 0 0 2.37 12c0 1.56.37 3.04 1.03 4.44l3.24-2.58Z"/><path fill="#EA4335" d="M12 6.2c1.43 0 2.7.49 3.7 1.45l2.78-2.78C16.82 3.31 14.62 2.27 12 2.27A9.63 9.63 0 0 0 3.4 7.56l3.24 2.58C7.4 7.88 9.51 6.2 12 6.2Z"/></svg>Continue with Google</a>
+          <a class="signin-google" href="{sign_in_url}" target="_top"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.35 12.22c0-.71-.06-1.39-.18-2.04H12v3.86h5.24a4.48 4.48 0 0 1-1.94 2.94v2.5h3.14c1.84-1.7 2.91-4.2 2.91-7.26Z"/><path fill="#34A853" d="M12 21.73c2.62 0 4.82-.87 6.38-2.35l-3.14-2.5c-.87.58-1.99.92-3.24.92-2.49 0-4.6-1.68-5.36-3.94H3.4v2.58A9.63 9.63 0 0 0 12 21.73Z"/><path fill="#FBBC05" d="M6.64 13.86A5.8 5.8 0 0 1 6.34 12c0-.64.11-1.26.3-1.86V7.56H3.4A9.7 9.7 0 0 0 2.37 12c0 1.56.37 3.04 1.03 4.44l3.24-2.58Z"/><path fill="#EA4335" d="M12 6.2c1.43 0 2.7.49 3.7 1.45l2.78-2.78C16.82 3.31 14.62 2.27 12 2.27A9.63 9.63 0 0 0 3.4 7.56l3.24 2.58C7.4 7.88 9.51 6.2 12 6.2Z"/></svg>Continue with Google</a>
           <p class="signin-footnote">We use your verified Google identity only to secure your workspace and presentation history.</p>
         </section></main>''', unsafe_allow_html=True)
         st.stop()
@@ -439,13 +497,12 @@ with st.sidebar:
     st.markdown("""<div class="sidebar-console"><div class="label">AI PRESENTATION STUDIO</div><div class="name">SLIDEWEAVER</div><div class="status"><span class="dot"></span>SYSTEM READY</div></div>""", unsafe_allow_html=True)
     if auth_info.get("authenticated"):
         st.caption(f"Signed in · {auth_info.get('email')}")
-        if st.button("Sign out", use_container_width=True):
-            try:
-                httpx.post(f"{API}/api/auth/logout", headers=ACCESS_HEADERS, timeout=5).raise_for_status()
-            except httpx.HTTPError:
-                pass
-            st.session_state.pop("access_session_id", None)
-            st.rerun()
+        # This request is browser-originated (rather than server-side httpx),
+        # allowing the API to delete the HttpOnly cookie as part of sign-out.
+        browser_logout_url=html.escape(f"{PUBLIC_API_URL}/api/auth/logout/browser", quote=True)
+        st.markdown(f'''<form class="sidebar-logout-form" action="{browser_logout_url}" method="post" target="_top">
+          <button type="submit">Sign out</button>
+        </form>''', unsafe_allow_html=True)
     # Local Ollama remains an opt-in server-side contingency only. Users choose
     # between the two supported cloud agent sources.
     provider=st.selectbox("Provider",["Gemini","NVIDIA"])
