@@ -1,10 +1,11 @@
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from app.api.routes.access import require_active_session
-from app.services.admin_service import activity_snapshot, admin_user_for_session, delete_feedback, login_history, purge_old_feedback
+from app.services.admin_service import activity_snapshot, admin_user_for_session, delete_feedback, login_history, presentation_file_history, purge_old_feedback
 from app.models.database import FeedbackReport, SessionLocal
 from app.services.lifecycle_service import cleanup_expired_files
 
@@ -19,10 +20,26 @@ def admin_activity(session_id: str = Depends(require_active_session)):
 
 
 @router.get("/login-history")
-def admin_login_history(session_id: str = Depends(require_active_session)):
+def admin_login_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    on_date: date | None = Query(default=None),
+    session_id: str = Depends(require_active_session),
+):
     if not admin_user_for_session(session_id):
         raise HTTPException(status_code=403, detail="Administrator access is required.")
-    return {"events":login_history()}
+    return login_history(page=page, page_size=page_size, on_date=on_date)
+
+
+@router.get("/presentations")
+def admin_presentations(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    session_id: str = Depends(require_active_session),
+):
+    if not admin_user_for_session(session_id):
+        raise HTTPException(status_code=403, detail="Administrator access is required.")
+    return presentation_file_history(page=page, page_size=page_size)
 
 
 @router.post("/cleanup-expired-files")

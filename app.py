@@ -213,7 +213,7 @@ def admin_activity():
     except (httpx.HTTPError, ValueError):
         st.error("Admin activity is temporarily unavailable.")
         return
-    overview_tab, history_tab, feedback_tab=st.tabs(["Overview", "Sign-in history", "Feedback & storage"])
+    overview_tab, history_tab, presentations_tab, feedback_tab=st.tabs(["Overview", "Sign-in history", "Presentations & files", "Feedback & storage"])
     with overview_tab:
         left, middle, right=st.columns(3)
         left.metric("Active users", snapshot.get("active_users", 0))
@@ -246,11 +246,29 @@ def admin_activity():
                     st.caption(f"Latest job · {status}: {stage}")
     with history_tab:
         st.caption("Successful Google sign-ins and explicit sign-outs. This history starts when the feature is deployed.")
+        filter_left, filter_right=st.columns([2, 1])
+        selected_login_date=filter_left.date_input(
+            "Calendar date (UTC)", value=None, key="admin_login_history_date",
+            help="Leave blank to view sign-in activity from all dates.",
+        )
+        login_page_size=filter_right.selectbox("Rows per page", [10, 25, 50], index=0, key="admin_login_history_page_size")
+        filter_value=selected_login_date.isoformat() if selected_login_date else ""
+        if st.session_state.get("admin_login_history_filter") != (filter_value, login_page_size):
+            st.session_state.admin_login_history_filter=(filter_value, login_page_size)
+            st.session_state.admin_login_history_page=1
+        login_page=st.session_state.get("admin_login_history_page", 1)
         try:
-            history_response=httpx.get(f"{API}/api/admin/login-history", headers=ACCESS_HEADERS, timeout=8)
+            history_response=httpx.get(
+                f"{API}/api/admin/login-history",
+                params={"page":login_page, "page_size":login_page_size, **({"on_date":filter_value} if filter_value else {})},
+                headers=ACCESS_HEADERS,
+                timeout=8,
+            )
             history_response.raise_for_status()
-            history=history_response.json().get("events", [])
+            history_payload=history_response.json()
+            history=history_payload.get("events", [])
         except (httpx.HTTPError, ValueError):
+            history_payload={"page":1, "total_pages":1, "total":0}
             history=[]
             st.warning("Sign-in history is temporarily unavailable.")
         if not history:
@@ -260,6 +278,63 @@ def admin_activity():
             left, right=st.columns([3, 1])
             left.markdown(f"{symbol} **{event.get('email', 'Unknown user')}** · {str(event.get('event', '')).replace('_', ' ').title()}")
             right.caption(relative_time(event.get("created_at")))
+        current_page=int(history_payload.get("page", 1))
+        total_pages=int(history_payload.get("total_pages", 1))
+        previous, indicator, following=st.columns([1, 2, 1])
+        if previous.button("← Previous", key="admin_login_history_previous", disabled=current_page <= 1, use_container_width=True):
+            st.session_state.admin_login_history_page=current_page - 1
+            st.rerun()
+        indicator.caption(f"Page {current_page} of {total_pages} · {history_payload.get('total', 0)} event(s)")
+        if following.button("Next →", key="admin_login_history_next", disabled=current_page >= total_pages, use_container_width=True):
+            st.session_state.admin_login_history_page=current_page + 1
+            st.rerun()
+    with presentations_tab:
+        st.caption("Deck titles, requesting accounts, and the current generated PPTX location on this server.")
+        presentation_page_size=st.selectbox("Rows per page", [10, 25, 50], index=0, key="admin_presentation_page_size")
+        if st.session_state.get("admin_presentation_history_page_size") != presentation_page_size:
+            st.session_state.admin_presentation_history_page_size=presentation_page_size
+            st.session_state.admin_presentation_history_page=1
+        presentation_page=st.session_state.get("admin_presentation_history_page", 1)
+        try:
+            presentation_response=httpx.get(
+                f"{API}/api/admin/presentations",
+                params={"page":presentation_page, "page_size":presentation_page_size},
+                headers=ACCESS_HEADERS,
+                timeout=8,
+            )
+            presentation_response.raise_for_status()
+            presentation_payload=presentation_response.json()
+            presentations=presentation_payload.get("presentations", [])
+        except (httpx.HTTPError, ValueError):
+            presentation_payload={"page":1, "total_pages":1, "total":0}
+            presentations=[]
+            st.warning("Presentation file history is temporarily unavailable.")
+        if not presentations:
+            st.info("No presentations have been requested yet.")
+        for presentation in presentations:
+            title=html.escape(str(presentation.get("title") or "Untitled presentation"))
+            with st.expander(f"{title} · {str(presentation.get('status') or 'unknown').title()}"):
+                st.markdown(f"**Requested by:** {presentation.get('requester_name') or 'Unknown'} · `{presentation.get('requester_email') or 'Unknown'}`")
+                st.caption(f"Created {relative_time(presentation.get('created_at'))} · updated {relative_time(presentation.get('updated_at'))}")
+                if presentation.get("version"):
+                    st.caption(f"Version {presentation['version']} · server file: `{presentation.get('server_filename')}`")
+                    st.code(presentation.get("server_path") or "", language=None)
+                    if presentation.get("file_exists"):
+                        st.success("PPTX file is present on the server.")
+                    else:
+                        st.warning("No current PPTX file is present. It may have expired or generation did not complete.")
+                else:
+                    st.caption("No generated PPTX version exists yet.")
+        current_presentation_page=int(presentation_payload.get("page", 1))
+        presentation_total_pages=int(presentation_payload.get("total_pages", 1))
+        previous, indicator, following=st.columns([1, 2, 1])
+        if previous.button("← Previous", key="admin_presentation_previous", disabled=current_presentation_page <= 1, use_container_width=True):
+            st.session_state.admin_presentation_history_page=current_presentation_page - 1
+            st.rerun()
+        indicator.caption(f"Page {current_presentation_page} of {presentation_total_pages} · {presentation_payload.get('total', 0)} presentation(s)")
+        if following.button("Next →", key="admin_presentation_next", disabled=current_presentation_page >= presentation_total_pages, use_container_width=True):
+            st.session_state.admin_presentation_history_page=current_presentation_page + 1
+            st.rerun()
     with feedback_tab:
         feedback=snapshot.get("feedback", [])
         purge_days=st.selectbox("Delete feedback older than", [7, 30, 90, 180, 365], index=1, format_func=lambda days: f"{days} days", key="feedback_purge_days")

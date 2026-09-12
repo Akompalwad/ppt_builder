@@ -1,13 +1,13 @@
 """Small, server-authorized operational view for the SlideWeaver owner."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select
 
 from app.config import get_settings
-from app.models.database import ActiveAccessSession, FeedbackReport, GenerationJob, LoginAudit, OAuthSession, Presentation, SessionLocal, User
+from app.models.database import ActiveAccessSession, FeedbackReport, GenerationJob, LoginAudit, OAuthSession, Presentation, PresentationVersion, SessionLocal, User
 
 
 def configured_admin_emails() -> set[str]:
@@ -80,10 +80,76 @@ def activity_snapshot() -> dict:
         }
 
 
-def login_history(limit: int=100) -> list[dict]:
+def login_history(*, page: int=1, page_size: int=20, on_date: date | None=None) -> dict:
+    """Return one page of audit events, optionally restricted to a UTC date."""
+    page=max(1, page)
+    page_size=min(max(1, page_size), 100)
     with SessionLocal() as db:
-        events=db.scalars(select(LoginAudit).order_by(LoginAudit.created_at.desc()).limit(limit)).all()
-        return [{"id":event.id, "email":event.email, "event":event.event, "created_at":event.created_at.isoformat()} for event in events]
+        filters=[]
+        if on_date:
+            start=datetime.combine(on_date, time.min)
+            filters.extend((LoginAudit.created_at >= start, LoginAudit.created_at < start + timedelta(days=1)))
+        total=db.scalar(select(func.count(LoginAudit.id)).where(*filters)) or 0
+        events=db.scalars(
+            select(LoginAudit)
+            .where(*filters)
+            .order_by(LoginAudit.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        return {
+            "events":[{"id":event.id, "email":event.email, "event":event.event, "created_at":event.created_at.isoformat()} for event in events],
+            "page":page,
+            "page_size":page_size,
+            "total":total,
+            "total_pages":max(1, (total + page_size - 1) // page_size),
+            "date":on_date.isoformat() if on_date else None,
+        }
+
+
+def presentation_file_history(*, page: int=1, page_size: int=20) -> dict:
+    """Return an admin-only index of deck ownership and generated server files."""
+    page=max(1, page)
+    page_size=min(max(1, page_size), 100)
+    with SessionLocal() as db:
+        total=db.scalar(select(func.count(Presentation.id))) or 0
+        rows=db.execute(
+            select(Presentation, User, PresentationVersion)
+            .join(User, Presentation.user_id == User.id)
+            .outerjoin(PresentationVersion, Presentation.current_version_id == PresentationVersion.id)
+            .order_by(Presentation.updated_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        presentations=[]
+        for presentation, user, version in rows:
+            filename="presentation.pptx"
+            file_path=None
+            file_exists=False
+            if version:
+                path=get_settings().local_storage_path / presentation.id / "versions" / str(version.version_number) / filename
+                file_path=str(path)
+                file_exists=path.is_file()
+            presentations.append({
+                "id":presentation.id,
+                "title":presentation.title,
+                "status":presentation.status,
+                "requester_name":user.display_name,
+                "requester_email":user.email,
+                "created_at":presentation.created_at.isoformat(),
+                "updated_at":presentation.updated_at.isoformat(),
+                "version":version.version_number if version else None,
+                "server_filename":filename if version else None,
+                "server_path":file_path,
+                "file_exists":file_exists,
+            })
+        return {
+            "presentations":presentations,
+            "page":page,
+            "page_size":page_size,
+            "total":total,
+            "total_pages":max(1, (total + page_size - 1) // page_size),
+        }
 
 
 def _safe_feedback_screenshot(path_text: str | None) -> Path | None:
