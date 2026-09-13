@@ -19,6 +19,7 @@ from app.config import Settings
 from app.models.database import GenerationJob
 from app.services.presentation_service import PresentationService
 from app.services.pii_protection_service import PIIProtectionError, PIIProtectionService
+from app.services.source_fidelity_service import source_fidelity_requested
 from pptx import Presentation
 
 def test_generation_queue_snapshot_reports_waiting_depth():
@@ -903,3 +904,34 @@ def test_chevron_flow_places_step_details_inside_connected_stages(tmp_path):
 def test_request_accepts_a_detailed_structured_brief():
     request=CreatePresentationRequest(topic="{" + '"slides":[],' * 700 + "}")
     assert len(request.topic) > 2_000
+
+def test_portfolio_brief_preserves_authored_case_study_copy_and_theme():
+    prompt='''Create a polished 3-slide personal portfolio presentation for Ajay Kompalwad.
+Slide 1: Cover
+Use this value proposition: “Building practical AI products that turn complex work into simple experiences.”
+Include three capability tags: AI Systems, Product Engineering, Automation.
+Slide 2: Selected Work — SlideWeaver
+Problem: Creating polished, editable PowerPoint presentations is slow, repetitive, and difficult to iterate on.
+Solution: SlideWeaver is an AI presentation platform that uses multi-agent planning to create editable PowerPoint decks with native diagrams, charts, editable shapes, live preview, PII-aware external-provider protection, and presentation history.
+Outcome: It helps users turn detailed prompts into professional, editable PowerPoint decks while retaining control over content, structure, and iteration.
+Slide 3: How I Work & Connect
+1. Understand the real workflow
+2. Build a reliable system
+3. Iterate from user feedback
+Close with: “Open to collaborating on AI-enabled products, automation, and platform engineering.”
+Use a refined dark indigo portfolio theme with restrained cyan accents.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=3)
+    assert [(slide.title, slide.layout_type) for slide in brief.slides] == [
+        ("Ajay Kompalwad", LayoutType.title_slide),
+        ("Selected Work — SlideWeaver", LayoutType.feature_grid),
+        ("How I Work & Connect", LayoutType.step_workflow),
+    ]
+    assert [item.heading for item in brief.slides[0].elements] == ["AI Systems", "Product Engineering", "Automation"]
+    assert brief.slides[1].elements[1].body.startswith("SlideWeaver is an AI presentation platform")
+    assert [item.heading for item in brief.slides[2].elements] == ["Understand the real workflow", "Build a reliable system", "Iterate from user feedback"]
+    assert auto_theme_for_topic(prompt).name == "Portfolio Indigo"
+
+def test_source_fidelity_is_explicit_and_does_not_change_normal_creative_prompts():
+    assert source_fidelity_requested("Create slides from the provided Word document. Use only the provided content and do not change the meaning.")
+    assert source_fidelity_requested("Source fidelity: preserve facts and figures while condensing the text.")
+    assert not source_fidelity_requested("Create a concise, creative presentation about product strategy.")

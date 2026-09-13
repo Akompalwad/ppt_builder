@@ -533,6 +533,18 @@ def title_slide(slide, spec, d):
     add_text(slide,spec.title,MARGIN,1.62,text_width,2.60,cover_title_size(spec.title),d.header_color,True,font=d.font_heading)
     subtitle=spec.subtitle or spec.purpose
     add_text(slide,subtitle,MARGIN,4.58,7.2,.66,20,d.text_secondary)
+    # Portfolio covers have a compact capability signature. Keeping this
+    # branch opt-in prevents ordinary title slides from becoming card-heavy.
+    if spec.visual_spec.get("portfolio_contract") and spec.elements:
+        x=MARGIN
+        for item in spec.elements[:3]:
+            tag=clean_copy(item.heading or item.label or "")
+            if not tag:
+                continue
+            width=max(1.18, min(2.45, .48 + len(tag) * .105))
+            add_shape(slide, MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE, x, 5.58, width, .38, d.surface_color, d.primary_color)
+            add_text(slide, tag, x+.12, 5.68, width-.24, .13, 9, d.primary_color, True, align=PP_ALIGN.CENTER)
+            x += width + .16
 
 def add_picture_cover(slide, image_path: Path, x: float, y: float, w: float, h: float):
     """Place a raster visual inside an exact canvas frame without spillover."""

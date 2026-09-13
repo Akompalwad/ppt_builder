@@ -7,6 +7,7 @@ from app.agents.storyline_agent import StorylineAgent
 from app.agents.slide_content_agent import SlideContentAgent
 from app.agents.brief_agent import BriefInterpreterAgent
 from app.agents.diagram_architect_agent import DiagramArchitectAgent
+from app.services.source_fidelity_service import SOURCE_FIDELITY_INSTRUCTION, source_fidelity_requested
 from app.config import get_settings
 from datetime import datetime, timezone
 import hashlib
@@ -51,6 +52,17 @@ def explicit_brand_theme(prompt: str) -> DesignSystem | None:
             header_color="#102A43", text_primary="#102A43", text_secondary="#353535",
             muted_text="#756D66", font_heading="Georgia", font_body="Arial",
             card_style="flat", shadow_style="none",
+        )
+    portfolio_indigo=(
+        ("dark indigo" in text or "indigo portfolio" in text)
+        and ("cyan accent" in text or "cyan accents" in text)
+    )
+    if portfolio_indigo:
+        return DesignSystem(
+            name="Portfolio Indigo", background_color="#0B1026", surface_color="#171D3B",
+            primary_color="#22D3EE", secondary_color="#5267D8", accent_color="#A78BFA",
+            header_color="#F7FAFF", text_primary="#F7FAFF", text_secondary="#BBC8E3",
+            muted_text="#7F90B6", card_style="elevated", shadow_style="soft",
         )
     if light_request:
         return DesignSystem(
@@ -144,6 +156,7 @@ class PresentationOrchestrator:
         def stage(name, value):
             if progress: progress(name, value)
         stage("Brief Classification Agent — analyzing prompt structure", 8); topic=request.topic.strip(); title=_clean_model_copy(topic,52).rstrip(".")
+        source_fidelity=source_fidelity_requested(topic)
         brief_agent=BriefInterpreterAgent()
         prompt_classification=brief_agent.classify(topic)
         brief=brief_agent.interpret(topic, request.slide_count)
@@ -183,6 +196,7 @@ class PresentationOrchestrator:
                 resolved_theme=resolve_theme(request.theme, topic)
                 prompt=f'''Create a professional {request.slide_count}-slide PowerPoint deck specification.
 Topic: {topic}\nAudience: {request.audience}\nTone: {request.tone}\nLanguage: {request.language}\nTheme: {resolved_theme.name}
+{SOURCE_FIDELITY_INSTRUCTION if source_fidelity else ""}
 Return one JSON object with these top-level fields: title, subtitle, topic, objective, target_audience, language, theme, slides. The `theme` value must be exactly "{resolved_theme.name}". Each slide must contain slide_number, title, layout_type, purpose, elements, and visual_spec. Each element contains type, heading, and body. visual_spec contains icon_concept, image_required, image_prompt, and stock_query.
 Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architecture_layers, comparison, timeline, process_flow, dashboard, two_column, key_metrics, summary, content_with_visual. Include exactly {request.slide_count} consecutively numbered slides. Use 2–3 elements per content slide; use four only for a true comparison. Each heading must be under 42 characters and each body under 120 characters. Write takeaway-style titles that make a point, not generic section labels. Every slide needs an icon_concept. Request image_required only for the cover and at most two content slides where an image materially helps. image_prompt must describe the visual only: no text, logos, UI, or watermark. stock_query must be a concise 3–6 word Unsplash search query, with no brand names.'''
                 # The previous fixed 6,000-token budget made a three-slide deck
@@ -199,6 +213,10 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                     generated=normalize_slide_copy(LLMGateway.from_settings(selected_provider,request.model).generate_json(prompt,max_tokens=token_budget))
                     generated["design_system"]=resolved_theme.model_dump()
                     spec=PresentationSpec.model_validate(generated)
+                if source_fidelity:
+                    spec.metadata["source_fidelity"]=True
+                    for slide in spec.slides:
+                        slide.visual_spec["source_fidelity"]=True
                 if not topic_matches_deck(spec, topic):
                     raise ValueError("Provider returned a deck unrelated to the requested topic")
                 stage("Storyline Agent — assigning narrative roles", 70)
@@ -255,6 +273,10 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             progress=stage,
                         )
                         spec.design_system=resolved_theme
+                        if source_fidelity:
+                            spec.metadata["source_fidelity"]=True
+                            for slide in spec.slides:
+                                slide.visual_spec["source_fidelity"]=True
                         if not topic_matches_deck(spec, topic):
                             raise ValueError("Local provider returned a deck unrelated to the requested topic")
                         stage("Storyline Agent — assigning narrative roles",70)
@@ -321,6 +343,10 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                     purpose="Explain one decision-relevant idea"; elements=[SlideElement(type="card",heading="What matters",body=f"The most important consideration for {topic.lower()} in this context."),SlideElement(type="card",heading="Why now",body="A concise rationale grounded in audience needs and business outcomes."),SlideElement(type="card",heading="Practical implication",body="A clear action that can be tested, owned, and measured.")]
                 slides.append(SlideSpec(slide_number=number,title=heading,layout_type=layout,purpose=purpose,elements=elements,visual_spec={"treatment":"native_shapes"}))
         stage("COMPOSING",82); spec=PresentationSpec(title=title,subtitle=f"{request.tone} presentation",topic=topic,target_audience=request.audience,language=request.language,theme=theme.name,slides=slides,design_system=theme)
+        if source_fidelity:
+            spec.metadata["source_fidelity"]=True
+            for slide in spec.slides:
+                slide.visual_spec["source_fidelity"]=True
         storyline_plan=StorylineAgent().apply(spec)
         diagram_plans=DiagramArchitectAgent().apply(spec)
         design_plan=DesignDirectorAgent().apply(

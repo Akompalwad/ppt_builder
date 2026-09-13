@@ -4,6 +4,7 @@ from __future__ import annotations
 from app.llm.gateway import LLMGateway
 from app.config import get_settings
 from app.schemas.presentation import CreatePresentationRequest, LayoutType, PresentationSpec, SlideSpec
+from app.services.source_fidelity_service import SOURCE_FIDELITY_INSTRUCTION, source_fidelity_requested
 
 
 class SlideContentAgent:
@@ -44,6 +45,12 @@ class SlideContentAgent:
             # IDs, headings, and the user's seed detail are authoritative;
             # the cloud agent may improve the explanatory copy only.
             merged=element.model_dump()
+            if getattr(directive, "portfolio_contract", False):
+                # Portfolio case-study statements are user-authored claims.
+                # A provider may improve visual composition, but must never
+                # turn them into unverified results or generic process copy.
+                preserved.append(merged)
+                continue
             if directive.nested_bullets or (
                 directive.native_diagram
                 and directive.layout_type == LayoutType.architecture_layers
@@ -154,6 +161,7 @@ class SlideContentAgent:
         brief=None,
         progress=None,
     ) -> PresentationSpec:
+        source_fidelity=source_fidelity_requested(request.topic)
         placeholders=[]
         for number in range(1, request.slide_count + 1):
             directive=brief.by_number(number) if brief else None
@@ -229,12 +237,13 @@ Story intent: {beat.intent}
 Preferred composition: {beat.preferred_recipe}
 {locked_contract}
 {prose_contract}
+{SOURCE_FIDELITY_INSTRUCTION if source_fidelity else ""}
 Visual asset rule: {"Set image_required to true for this cover and provide a precise Unsplash stock_query." if slide.slide_number == 1 else "Set image_required to true only when a real photograph materially improves this slide; otherwise use false."}
 
 Return one valid JSON object only. It must include title, subtitle, layout_type, purpose, elements, and visual_spec. Each element must include type, heading, and body. visual_spec must include icon_concept, image_required, image_prompt, and stock_query.
 
 Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architecture_layers, comparison, timeline, process_flow, dashboard, two_column, key_metrics, summary, content_with_visual.
-{element_count_rule} Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context". Do not infer, mention, or fulfill instructions belonging to any other slide.'''
+{element_count_rule} Keep headings under 42 characters and bodies under 120 characters. Story role and story intent are private planning instructions: never repeat or paraphrase them in title, subtitle, purpose, headings, or body copy. Purpose must state a complete, concrete audience-facing insight, never an instruction such as "Set the decision context". Do not infer, mention, or fulfill instructions belonging to any other slide. Never invent business metrics, customers, implementation results, or performance claims that were not explicitly supplied.'''
             max_tokens=get_settings().gemini_max_output_tokens if provider == "gemini" else 1200
             generated=gateway.generate_json(prompt, max_tokens=max_tokens, temperature=.1)
             if directive and (directive.elements or directive.requirements) and isinstance(generated, dict):
@@ -247,4 +256,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
             spec.slides[slide.slide_number-1]=SlideSpec.model_validate(
                 self._complete_slide_payload(slide, directive, generated)
             )
+            if source_fidelity:
+                spec.slides[slide.slide_number-1].visual_spec["source_fidelity"]=True
+        if source_fidelity:
+            spec.metadata["source_fidelity"]=True
         return spec

@@ -118,19 +118,21 @@ class PresentationQAAgent:
         issues=[]
         for slide in spec.slides:
             locked=bool(slide.metadata.get("brief_layout_locked") or slide.metadata.get("content_contract_locked"))
+            portfolio_contract=bool(slide.visual_spec.get("portfolio_contract"))
+            source_fidelity=bool(slide.visual_spec.get("source_fidelity"))
             if slide.layout_type == LayoutType.title_slide:
                 # Preserve the complete comparison named in the user request;
                 # it is the deck's essential promise, not optional filler.
                 derived_title=comparison_cover_title(spec.topic)
-                if derived_title:
+                if derived_title and not portfolio_contract:
                     if slide.title != derived_title:
                         issues.append(f"Slide {slide.slide_number}: restored complete comparison title")
                     slide.title=derived_title
-                elif not locked:
+                elif not locked and not source_fidelity:
                     slide.title=summarize_point(slide.title, 10)
-            elif not locked:
+            elif not locked and not source_fidelity:
                 slide.title=summarize_point(slide.title, 8)
-            if slide.subtitle: slide.subtitle=summarize_point(slide.subtitle,18)
+            if slide.subtitle and not portfolio_contract and not source_fidelity: slide.subtitle=summarize_point(slide.subtitle,18)
             # Purpose is rendered as the lead statement in several layouts.
             # It must have its own budget, otherwise a model can place a
             # paragraph in a box intended for one or two lines.
@@ -141,8 +143,9 @@ class PresentationQAAgent:
             else:
                 purpose_budget=18
             raw_purpose=slide.purpose
-            slide.purpose=summarize_point(raw_purpose, purpose_budget)
-            if _is_unusable_lead(raw_purpose) or _is_unusable_lead(slide.purpose):
+            if not portfolio_contract and not source_fidelity:
+                slide.purpose=summarize_point(raw_purpose, purpose_budget)
+            if not portfolio_contract and not source_fidelity and (_is_unusable_lead(raw_purpose) or _is_unusable_lead(slide.purpose)):
                 replacement=_fact_based_lead(slide)
                 if replacement:
                     slide.purpose=replacement
@@ -169,7 +172,15 @@ class PresentationQAAgent:
                     # Service names and diagram node labels are source data,
                     # not prose. Summarising them can erase line-separated
                     # values such as "API Management\nApp Services / AKS".
-                    if locked and slide.visual_spec.get("native_diagram"):
+                    if portfolio_contract:
+                        element.body=raw_body
+                    elif source_fidelity:
+                        # The content agent has already been told to produce
+                        # source-grounded slide copy. Keep it intact whenever
+                        # it fits; only compact exceptional long passages to
+                        # one complete statement rather than altering facts.
+                        element.body=raw_body if len(raw_body) <= 210 else summarize_point(raw_body, 28)
+                    elif locked and slide.visual_spec.get("native_diagram"):
                         element.body=raw_body
                     elif slide.visual_spec.get("nested_bullets"):
                         sentences=[part.strip() for part in re.split(r"(?<=[.!?])\s*", raw_body) if part.strip()]

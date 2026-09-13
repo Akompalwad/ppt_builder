@@ -47,6 +47,7 @@ class BriefSlide(BaseModel):
     visual_instruction: str | None = None
     native_diagram: bool = False
     diagram_kind: str | None = None
+    portfolio_contract: bool = False
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -75,6 +76,7 @@ class BriefSlide(BaseModel):
                 **({"brief_visual_instruction":self.visual_instruction} if self.visual_instruction else {}),
                 **({"native_diagram":True, "image_required":False} if self.native_diagram else {}),
                 **({"diagram_kind":self.diagram_kind} if self.diagram_kind else {}),
+                **({"portfolio_contract":True} if self.portfolio_contract else {}),
             },
             metadata={"brief_layout_locked": True, "requested_element_count":self.exact_element_count},
         )
@@ -917,6 +919,83 @@ USER BRIEF:\n{bounded_prompt}''',
             },
         }
 
+    @staticmethod
+    def _portfolio_brief(normalized: str) -> PresentationBrief | None:
+        """Extract a small, authored portfolio contract without creative rewriting.
+
+        Portfolio briefs often use labelled prose rather than the general
+        ``Slide N: Title`` grammar.  Treating those directions as model input
+        caused phrases such as "Present Ajay as ..." to appear on the slide,
+        and encouraged invented impact metrics.  This deliberately narrow
+        parser preserves the supplied case-study copy as visible source data.
+        """
+        if not re.search(r"(?i)\b(?:personal|professional)\s+portfolio\b", normalized):
+            return None
+        if len(re.findall(r"(?i)\bslide\s+[123]\s*:", normalized)) < 3:
+            return None
+
+        name_match=re.search(r"(?i)portfolio\s+presentation\s+for\s+([^\.\n]+)", normalized)
+        name=(name_match.group(1).strip() if name_match else "Portfolio")
+
+        def labelled(label: str, following: str) -> str:
+            match=re.search(
+                rf"(?ims)^\s*{re.escape(label)}\s*:\s*(.+?)(?=^\s*{re.escape(following)}\s*:|\Z)",
+                normalized,
+            )
+            return " ".join(match.group(1).split()).strip() if match else ""
+
+        value_match=re.search(r"(?is)value\s+proposition\s*:\s*[\"“]([^\"”]+)[\"”]", normalized)
+        value=value_match.group(1).strip() if value_match else ""
+        tags_match=re.search(r"(?is)capability\s+tags\s*:\s*(.+?)(?=\.|\n\s*Slide\s+2:)", normalized)
+        tags=[]
+        if tags_match:
+            tags=[item.strip(" .") for item in re.split(r",|\n", tags_match.group(1)) if item.strip(" .")]
+        problem=labelled("Problem", "Solution")
+        solution=labelled("Solution", "Outcome")
+        outcome=labelled("Outcome", "Slide 3")
+        steps=[]
+        slide_three=re.search(r"(?is)slide\s+3\s*:\s*(.+?)(?=\Z)", normalized)
+        if slide_three:
+            steps=[" ".join(item.split()) for item in re.findall(r"(?m)^\s*[123]\.\s*(.+?)\s*$", slide_three.group(1))]
+        close_match=re.search(r"(?is)close\s+with\s*:\s*[\"“]([^\"”]+)[\"”]", normalized)
+        close=close_match.group(1).strip() if close_match else ""
+
+        # Do not route an only-partial match through this strict renderer.
+        if not (value and problem and solution and outcome and len(steps) == 3 and close):
+            return None
+        return PresentationBrief(
+            deck_title=f"{name} Portfolio",
+            requested_slide_count=3,
+            slides=[
+                BriefSlide(
+                    slide_number=1, title=name, subtitle=value, purpose=value,
+                    layout_type=LayoutType.title_slide,
+                    elements=[SlideElement(type="tag", heading=tag) for tag in tags[:3]],
+                    exact_element_count=len(tags[:3]), portfolio_contract=True,
+                    content_instruction="Render the supplied value proposition and capability tags exactly. Do not add biography claims or metrics.",
+                ),
+                BriefSlide(
+                    slide_number=2, title="Selected Work — SlideWeaver",
+                    purpose="A concise problem, solution, and outcome case study.",
+                    layout_type=LayoutType.feature_grid,
+                    elements=[
+                        SlideElement(type="card", heading="Problem", body=problem),
+                        SlideElement(type="card", heading="Solution", body=solution),
+                        SlideElement(type="card", heading="Outcome", body=outcome),
+                    ],
+                    exact_element_count=3, portfolio_contract=True,
+                    content_instruction="Use the supplied case-study copy verbatim. Never invent metrics, customers, time savings, or product capabilities.",
+                ),
+                BriefSlide(
+                    slide_number=3, title="How I Work & Connect", subtitle=close, purpose=close,
+                    layout_type=LayoutType.step_workflow,
+                    elements=[SlideElement(type="step", heading=step, body="") for step in steps],
+                    exact_element_count=3, portfolio_contract=True,
+                    content_instruction="Render exactly these three workflow steps and the supplied closing call to action. Do not replace them with generic process labels.",
+                ),
+            ],
+        )
+
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
         if self.classify(prompt).mode != "structured":
             return PresentationBrief()
@@ -947,6 +1026,8 @@ USER BRIEF:\n{bounded_prompt}''',
             if slides:
                 return PresentationBrief(slides=slides, deck_title=payload.get("title"))
         normalized=self._normalize_markdown(prompt)
+        if portfolio:=self._portfolio_brief(normalized):
+            return portfolio
         deck_title_match=re.search(r"\b(?:presentation|deck)\s+titled\s+[\"“]([^\"”]+)[\"”]", normalized, re.I)
         declared_deck_title=(deck_title_match.group(1).strip() if deck_title_match
                              else self._prose_deck_title(normalized))
