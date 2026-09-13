@@ -45,7 +45,9 @@ class SlideContentAgent:
             # the cloud agent may improve the explanatory copy only.
             merged=element.model_dump()
             if directive.nested_bullets or (
-                directive.native_diagram and directive.layout_type == LayoutType.architecture_layers
+                directive.native_diagram
+                and directive.layout_type == LayoutType.architecture_layers
+                and bool((element.body or "").strip())
             ):
                 # Nested technical statements came directly from the user.
                 # Architecture layer service names are source data as well,
@@ -79,7 +81,10 @@ class SlideContentAgent:
             candidate=returned.get(requirement.lower(), {})
             preserved.append({
                 "type":candidate.get("type", "card"), "heading":requirement,
-                "body":candidate.get("body") or candidate.get("subtext") or f"Explain {requirement} in clear, complete terms.",
+                # Models may enrich a protected label. If they cannot, an
+                # empty body is safer than exposing an internal instruction
+                # as visible slide copy.
+                "body":candidate.get("body") or candidate.get("subtext") or "",
             })
         return preserved
 
@@ -102,7 +107,7 @@ class SlideContentAgent:
             repairs.append("title")
         purpose=payload.get("purpose")
         if not isinstance(purpose, str) or not purpose.strip():
-            purpose=fallback.purpose or f"Explain {title} for the audience."
+            purpose=fallback.purpose or f"Key considerations for {title}."
             repairs.append("purpose")
         elements=payload.get("elements")
         if not isinstance(elements, list):

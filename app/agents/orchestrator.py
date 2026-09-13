@@ -20,6 +20,14 @@ THEMES={
  "Aurora Tech": DesignSystem(name="Aurora Tech",background_color="#101024",surface_color="#20213C",primary_color="#A78BFA",secondary_color="#3B82F6",accent_color="#F6C945",header_color="#F4F0FF",text_primary="#FAF9FF",text_secondary="#C7C5E1",muted_text="#9390B5"),
 }
 
+def prompt_requests_brand_palette(prompt: str) -> bool:
+    """Whether the author explicitly supplied a visual colour direction."""
+    return bool(re.search(
+        r"(?i)\b(?:brand\s+colou?rs?|colou?r\s+scheme|palette|theme\s+featuring|"
+        r"accent\s+highlights?|forest\s+green|slate\s+charcoal|steel\s+blue|deep\s+navy)\b",
+        prompt or "",
+    ))
+
 def explicit_brand_theme(prompt: str) -> DesignSystem | None:
     """Resolve non-negotiable palette language before topic-based theming.
 
@@ -50,6 +58,19 @@ def explicit_brand_theme(prompt: str) -> DesignSystem | None:
             header_color="#12355B", text_primary="#12355B", text_secondary="#43576B",
             muted_text="#718398", card_style="flat", shadow_style="none",
         )
+    cyber_palette=(
+        ("obsidian" in text or "obsidian black" in text)
+        and ("neon safety blue" in text or "neon blue" in text)
+        and "crimson" in text
+    )
+    if cyber_palette:
+        return DesignSystem(
+            name="Obsidian Security", background_color="#090A0F", surface_color="#121722",
+            primary_color="#00A8FF", secondary_color="#4FACFE", accent_color="#E63946",
+            warning_color="#E63946", success_color="#20D3A2", header_color="#F5F8FF",
+            text_primary="#F5F8FF", text_secondary="#B9C7D8", muted_text="#7D91A8",
+            card_style="elevated", shadow_style="soft",
+        )
     # A named industrial palette is a binding branding contract, not merely
     # topic context.  Without this branch supply-chain decks fell through to
     # the generic security theme and acquired its teal accents.
@@ -63,6 +84,17 @@ def explicit_brand_theme(prompt: str) -> DesignSystem | None:
             primary_color="#5B86A6", secondary_color="#9BB6C8", accent_color="#F2A93B",
             header_color="#F3F7FA", text_primary="#F3F7FA", text_secondary="#CBD8E0",
             muted_text="#94AAB8", card_style="elevated", shadow_style="soft",
+        )
+    sustainability_palette=(
+        ("sustainability" in text or "net-zero" in text or "net zero" in text)
+        and "forest green" in text and "slate charcoal" in text and "mint" in text
+    )
+    if sustainability_palette:
+        return DesignSystem(
+            name="Sustainable Forest", background_color="#1B2420", surface_color="#2B3832",
+            primary_color="#2F6B4F", secondary_color="#6D967F", accent_color="#9BE0B7",
+            header_color="#F1F7F2", text_primary="#F1F7F2", text_secondary="#CAD9D0",
+            muted_text="#94A99D", card_style="elevated", shadow_style="soft",
         )
     return None
 
@@ -174,7 +206,10 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 # slide wording remains the responsibility of the content and
                 # QA stages.
                 stage("Design Director Agent — selecting layouts and visuals", 78)
-                design_plan=DesignDirectorAgent().apply(spec, provider=selected_provider, model=request.model)
+                design_plan=DesignDirectorAgent().apply(
+                    spec, provider=selected_provider, model=request.model,
+                    allow_prompt_palette=request.theme == "Auto" and prompt_requests_brand_palette(topic),
+                )
                 stage("Presentation QA Agent — checking copy and layout budgets", 87)
                 qa_report=PresentationQAAgent().validate_and_recompose(spec)
                 provider_label={"gemini":"Gemini", "nvidia":"NVIDIA", "ollama":"Ollama"}[selected_provider]
@@ -221,7 +256,10 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                         stage("Storyline Agent — assigning narrative roles",70)
                         storyline_plan=StorylineAgent().apply(spec)
                         stage("Design Director Agent — selecting layouts and visuals",78)
-                        design_plan=DesignDirectorAgent().apply(spec)
+                        design_plan=DesignDirectorAgent().apply(
+                            spec,
+                            allow_prompt_palette=request.theme == "Auto" and prompt_requests_brand_palette(topic),
+                        )
                         stage("Presentation QA Agent — checking copy and layout budgets",87)
                         qa_report=PresentationQAAgent().validate_and_recompose(spec)
                         spec.metadata["generation_provider"]="ollama_fallback"
@@ -277,7 +315,10 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 slides.append(SlideSpec(slide_number=number,title=heading,layout_type=layout,purpose=purpose,elements=elements,visual_spec={"treatment":"native_shapes"}))
         stage("COMPOSING",82); spec=PresentationSpec(title=title,subtitle=f"{request.tone} presentation",topic=topic,target_audience=request.audience,language=request.language,theme=theme.name,slides=slides,design_system=theme)
         storyline_plan=StorylineAgent().apply(spec)
-        design_plan=DesignDirectorAgent().apply(spec)
+        design_plan=DesignDirectorAgent().apply(
+            spec,
+            allow_prompt_palette=request.theme == "Auto" and prompt_requests_brand_palette(topic),
+        )
         stage("Presentation QA Agent — checking copy and layout budgets", 82)
         qa_report=PresentationQAAgent().validate_and_recompose(spec)
         spec.metadata["generation_provider"]="fallback" if fallback_reason else "deterministic"

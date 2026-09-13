@@ -1,6 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from sqlalchemy import select
 from app.models.database import GenerationJob, OAuthSession, Presentation, PresentationVersion, SessionLocal, User
 from app.schemas.presentation import CreatePresentationRequest, PresentationSpec
@@ -14,6 +15,69 @@ from app.services.generation_queue import shared_generation_queue
 
 DEV_EMAIL="local@example.test"
 class PresentationService:
+    # These are whole-pipeline budgets rather than a timeout for one API call.
+    # They deliberately include the renderer and image-aware QA passes that
+    # happen after the content model has returned.
+    _PIPELINE_STAGES=(
+        ("brief", 30), ("theme", 30), ("content", 90), ("story", 30),
+        ("visuals", 55), ("qa", 50), ("export", 15),
+    )
+
+    @staticmethod
+    def _pipeline_total_budget(slide_count: int) -> int:
+        """One monotonic ETA baseline for a new deck generation job."""
+        # Active content call (90s), post-content agents (150s), and every
+        # later slide request (80s). A 10-slide deck starts at 16 minutes;
+        # around slide 7 it naturally lands near eight minutes.
+        return 240 + max(0, slide_count-1)*80
+
+    @staticmethod
+    def _stage_budget(stage: str) -> int:
+        """Conservative stage budgets, used for an explicitly labelled ETA."""
+        stage=stage.lower()
+        return (
+            90 if "slide content" in stage or "drafting" in stage else
+            30 if any(token in stage for token in ("brief", "theme", "storyline", "design director")) else
+            25 if any(token in stage for token in ("visual asset", "image", "qa", "quality")) else
+            15 if any(token in stage for token in ("renderer", "pptx", "composing")) else 45
+        )
+
+    @classmethod
+    def _pipeline_remaining_budget(cls, stage: str) -> int:
+        """Return the downstream budget for the current stage plus all agents.
+
+        The stage strings are intentionally human-readable, so this maps them
+        back to the same seven groups shown in the UI. A content agent drafting
+        slide 3/10 reserves time for its remaining slide calls as well.
+        """
+        lower=stage.lower()
+        if "brief" in lower or "classification" in lower:
+            index=0
+        elif "theme" in lower:
+            index=1
+        elif "slide content" in lower or "drafting" in lower or "content validation" in lower:
+            index=2
+        elif "storyline" in lower or "story" in lower:
+            index=3
+        elif any(token in lower for token in ("design director", "visual asset", "image")):
+            index=4
+        elif any(token in lower for token in ("qa", "quality")):
+            index=5
+        elif any(token in lower for token in ("renderer", "pptx", "composer", "composing")):
+            index=6
+        else:
+            index=2
+        remaining=sum(seconds for _, seconds in cls._PIPELINE_STAGES[index:])
+        slide_match=re.search(r"slide\s+(\d+)\s*/\s*(\d+)", lower)
+        if index == 2 and slide_match:
+            current, total=(int(value) for value in slide_match.groups())
+            # Each later slide is a separate cloud request. A 10-slide deck
+            # at slide 7 therefore still reserves roughly eight minutes when
+            # the active slide, three remaining calls, visuals, QA, and PPTX
+            # export are all included—not merely the active call's timeout.
+            remaining+=max(0, total-current)*80
+        return remaining
+
     @staticmethod
     def _timing_estimate(job: GenerationJob, *, jobs_ahead: int = 0) -> dict:
         """Return an honest, coarse ETA without pretending cloud work is deterministic.
@@ -28,23 +92,27 @@ class PresentationService:
         status=str(job.status or "").upper()
         if status == "COMPLETED":
             return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":0, "current_stage_eta_seconds":0, "is_estimate":True}
-        stage=str(job.current_stage or "").lower()
-        stage_budget=(
-            90 if "slide content" in stage or "drafting" in stage else
-            30 if any(token in stage for token in ("brief", "theme", "storyline", "design director")) else
-            25 if any(token in stage for token in ("visual asset", "image", "qa", "quality")) else
-            15 if any(token in stage for token in ("renderer", "pptx", "composing")) else 45
-        )
+        stage=str(job.current_stage or "")
+        stage_budget=PresentationService._stage_budget(stage)
+        stage_started=job.stage_started_at or job.created_at
+        stage_started=stage_started.replace(tzinfo=timezone.utc) if stage_started.tzinfo is None else stage_started
+        stage_elapsed=max(0, int((datetime.now(timezone.utc)-stage_started).total_seconds()))
+        stage_remaining=max(0, stage_budget-stage_elapsed)
+        pipeline_budget=PresentationService._pipeline_remaining_budget(stage)
+        total_budget=job.estimated_total_seconds or pipeline_budget
         if status == "QUEUED":
             # A queued deck waits for its own typical run plus every job in
             # front of it. This is intentionally a range-like estimate rather
             # than a false promise of an exact start time.
-            remaining=min(900, max(stage_budget, (jobs_ahead + 1) * 120))
-            return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_budget, "is_estimate":True}
-        progress=max(1, min(99, int(job.progress or 1)))
-        progress_projection=int(elapsed * (100-progress) / max(progress, 20))
-        remaining=min(900, max(stage_budget, progress_projection))
-        return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_budget, "is_estimate":True}
+            remaining=min(1800, max(total_budget, (jobs_ahead + 1) * total_budget))
+            return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_budget, "current_stage_elapsed_seconds":stage_elapsed, "is_estimate":True}
+        # Do not re-estimate upwards when the content stage begins. This is a
+        # real countdown from the budget set at job creation. The stage-aware
+        # floor protects older jobs created before the baseline was persisted.
+        baseline_remaining=max(0, total_budget-elapsed)
+        stage_aware_remaining=stage_remaining + max(0, pipeline_budget-stage_budget)
+        remaining=min(1800, baseline_remaining if job.estimated_total_seconds else max(baseline_remaining, stage_aware_remaining))
+        return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_remaining, "current_stage_elapsed_seconds":stage_elapsed, "is_estimate":True}
 
     def _user(self, db, session_id: str):
         oauth_session=db.get(OAuthSession, session_id)
@@ -60,7 +128,7 @@ class PresentationService:
         return user
     def create(self, request: CreatePresentationRequest, session_id: str) -> tuple[str,str]:
         with SessionLocal() as db:
-            user=self._user(db,session_id); p=Presentation(user_id=user.id,title=request.topic[:500],topic=request.topic); db.add(p); db.flush(); job=GenerationJob(presentation_id=p.id); db.add(job); db.commit(); return p.id,job.id
+            user=self._user(db,session_id); p=Presentation(user_id=user.id,title=request.topic[:500],topic=request.topic); db.add(p); db.flush(); job=GenerationJob(presentation_id=p.id,estimated_total_seconds=self._pipeline_total_budget(request.slide_count)); db.add(job); db.commit(); return p.id,job.id
     def list_for_current_user(self, session_id: str) -> list[dict]:
         """History for the active profile; Google auth will supply real users later."""
         with SessionLocal() as db:
@@ -111,7 +179,7 @@ class PresentationService:
         with queue.slot(job_id):
             with SessionLocal() as db:
                 job=db.get(GenerationJob,job_id); presentation=db.get(Presentation,presentation_id)
-                def progress(stage,value): job.current_stage=stage; job.progress=value; job.status="RUNNING"; db.commit()
+                def progress(stage,value): job.current_stage=stage; job.progress=value; job.status="RUNNING"; job.stage_started_at=datetime.utcnow(); db.commit()
                 try:
                     spec=PresentationOrchestrator().generate(request,progress)
                     progress("Visual Asset Service — retrieving topic-specific imagery", 94)
@@ -141,7 +209,7 @@ class PresentationService:
             j=db.get(GenerationJob,job_id); user=self._user(db,session_id); presentation=db.get(Presentation,j.presentation_id) if j else None
             if not j or not presentation or presentation.user_id != user.id:
                 return None
-            result={"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message,"created_at":j.created_at.isoformat()}
+            result={"id":j.id,"presentation_id":j.presentation_id,"status":j.status,"progress":j.progress,"current_stage":j.current_stage,"error_message":j.error_message,"created_at":j.created_at.isoformat(),"stage_started_at":j.stage_started_at.isoformat() if j.stage_started_at else None}
             if j.status in {"QUEUED","RUNNING"}:
                 queue=shared_generation_queue(get_settings().generation_max_concurrent_jobs)
                 # The database covers the brief interval after the API accepts
@@ -192,7 +260,7 @@ class PresentationService:
                 if not job or not presentation:
                     return
                 def progress(stage:str,value:int):
-                    job.current_stage=stage; job.progress=value; job.status="RUNNING"; db.commit()
+                    job.current_stage=stage; job.progress=value; job.status="RUNNING"; job.stage_started_at=datetime.utcnow(); db.commit()
                 try:
                     current=db.get(PresentationVersion,presentation.current_version_id)
                     spec=PresentationSpec.model_validate(current.spec_json)

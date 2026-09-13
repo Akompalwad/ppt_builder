@@ -126,6 +126,7 @@ st.markdown("""
   .agent-pipeline__eyebrow { color:#8ca3bc; font-size:.7rem; font-weight:750; letter-spacing:.11em; text-transform:uppercase; }
   .agent-pipeline__summary { color:#dce9f5; font-size:.88rem; font-weight:650; }
   .agent-pipeline__count { color:#8ca3bc; font-size:.76rem; white-space:nowrap; }
+  .agent-pipeline__overall { margin-top:.14rem; color:#b8cbe0; font-size:.69rem; font-variant-numeric:tabular-nums; text-align:right; }
   .agent-pipeline__rail { display:grid; grid-template-columns:repeat(var(--agent-count), minmax(0, 1fr)); margin: .9rem .15rem .8rem; }
   .agent-pipeline__stage { position:relative; min-width:0; text-align:center; }
   .agent-pipeline__stage:not(:last-child)::after { content:""; position:absolute; top:7px; left:50%; width:100%; height:1px; background:rgba(122, 145, 171, .32); }
@@ -135,6 +136,7 @@ st.markdown("""
   .agent-pipeline__stage.active .agent-pipeline__dot { border-color:#f7b955; background:#f7b955; box-shadow:0 0 0 4px rgba(247,185,85,.13),0 0 14px rgba(247,185,85,.42); }
   .agent-pipeline__stage.attention .agent-pipeline__dot { border-color:#ff6b6b; background:#ff6b6b; box-shadow:0 0 12px rgba(255,107,107,.48); }
   .agent-pipeline__label { color:#8496ac; font-size:.69rem; font-weight:700; letter-spacing:.01em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .agent-pipeline__eta { display:block; margin-top:.16rem; color:#657b92; font-size:.61rem; font-variant-numeric:tabular-nums; letter-spacing:.01em; white-space:nowrap; }
   .agent-pipeline__stage.done .agent-pipeline__label { color:#a8e9be; }
   .agent-pipeline__stage.active .agent-pipeline__label { color:#ffe1a3; }
   .agent-pipeline__stage.attention .agent-pipeline__label { color:#ffc0c0; }
@@ -144,6 +146,15 @@ st.markdown("""
   .agent-pipeline__state.complete i { background:#4ade80; box-shadow:0 0 8px rgba(74,222,128,.55); }
   .agent-pipeline__state.failed i { background:#ff6b6b; box-shadow:0 0 8px rgba(255,107,107,.55); }
   .agent-pipeline__timing { color:#8ca3bc; font-size:.72rem; margin-top:.48rem; }
+  .job-clock { display:inline-flex; align-items:center; gap:.5rem; margin:.5rem 0 .25rem; padding:.42rem .58rem; border:1px solid rgba(99, 234, 214, .30); border-radius:.62rem; background:linear-gradient(120deg, rgba(10,31,47,.78), rgba(17,26,63,.72)); box-shadow:inset 0 1px 0 rgba(255,255,255,.07), 0 8px 22px rgba(0,0,0,.16); }
+  .job-clock__label { color:#85a5be; font-size:.61rem; font-weight:800; letter-spacing:.11em; text-transform:uppercase; }
+  .job-clock__digits { display:flex; align-items:center; gap:.12rem; color:#d9fff4; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size:1.05rem; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:.04em; }
+  .job-clock__digit { display:inline-grid; place-items:center; min-width:1.16rem; height:1.54rem; border-radius:.22rem; background:linear-gradient(180deg, rgba(104,255,213,.22) 0 48%, rgba(35,132,122,.35) 52% 100%); border:1px solid rgba(120,255,221,.24); box-shadow:inset 0 1px 0 rgba(255,255,255,.12), 0 0 12px rgba(63,237,202,.12); animation:clock-flip .32s ease-out; }
+  .job-clock__colon { color:#55dcbf; animation:clock-pulse 1s steps(2, start) infinite; }
+  .job-clock.complete .job-clock__digits { color:#aaf3d8; }
+  .job-clock.failed { border-color:rgba(255,107,107,.36); } .job-clock.failed .job-clock__digits { color:#ffc0c0; }
+  @keyframes clock-flip { from { transform:rotateX(55deg); opacity:.3; } to { transform:rotateX(0); opacity:1; } }
+  @keyframes clock-pulse { 50% { opacity:.28; } }
   .signin-shell { min-height:72vh; display:flex; align-items:center; justify-content:center; padding:2rem 1rem 4rem; }
   .signin-card { width:min(100%, 480px); padding:2.7rem 2.55rem 2.25rem; border:1px solid rgba(122, 238, 219, .25); border-radius:1.25rem; text-align:center; background:linear-gradient(145deg, rgba(15, 36, 57, .91), rgba(12, 18, 48, .91)); box-shadow:0 28px 80px rgba(0,0,0,.36), inset 0 1px 0 rgba(255,255,255,.08); }
   .signin-mark { width:3.3rem; height:3.3rem; margin:0 auto 1.35rem; display:grid; place-items:center; border-radius:1rem; color:#06111c; font-size:1.35rem; font-weight:900; background:linear-gradient(135deg, #4bf0cd, #6a82ff); box-shadow:0 0 0 6px rgba(73,235,210,.08), 0 10px 30px rgba(51,209,199,.26); }
@@ -513,6 +524,50 @@ def _duration_label(seconds: object) -> str:
     return f"about {minutes}m" if remainder < 30 else f"about {minutes}m {remainder // 10 * 10}s"
 
 
+def _countdown_label(seconds: object) -> str:
+    """Short, live-friendly duration for stage counters."""
+    try:
+        value=max(0, int(seconds))
+    except (TypeError, ValueError):
+        return "estimating"
+    minutes, remainder=divmod(value, 60)
+    return f"{minutes}:{remainder:02d}" if minutes else f"{remainder}s"
+
+
+def _pipeline_stage_budget(label: str) -> int:
+    return {
+        "Brief": 30, "Theme": 30, "Story": 30, "Content": 90,
+        "Visuals": 25, "QA": 25, "Export": 15,
+    }.get(label, 45)
+
+
+def render_job_eta_clock(status: dict) -> None:
+    """A compact, flip-style countdown immediately beneath job refresh."""
+    job_status=str(status.get("status") or "").upper()
+    remaining=(status.get("timing") or {}).get("estimated_remaining_seconds")
+    if job_status == "COMPLETED":
+        label, digits, css_class="Pipeline ready", "00:00", "complete"
+    elif job_status == "FAILED":
+        label, digits, css_class="Pipeline status", "ERROR", "failed"
+    else:
+        try:
+            seconds=max(0, int(remaining))
+        except (TypeError, ValueError):
+            seconds=0
+        minutes, seconds=divmod(seconds, 60)
+        label="Pipeline ETA" if job_status == "RUNNING" else "Queue + ETA"
+        digits=f"{min(minutes, 99):02d}:{seconds:02d}"
+        css_class=""
+    digits_html="".join(
+        '<span class="job-clock__colon">:</span>' if character == ":" else f'<span class="job-clock__digit">{html.escape(character)}</span>'
+        for character in digits
+    )
+    st.markdown(
+        f'<div class="job-clock {css_class}"><span class="job-clock__label">{label}</span><span class="job-clock__digits">{digits_html}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
     """Render a compact, accessible job pipeline from the API's live stage text."""
     stages=(
@@ -556,10 +611,6 @@ def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
         summary="Generating presentation" if not is_slide_edit else "Updating slide"
         state_class=""
         state_label="In progress"
-    stages_html="".join(
-        f'<div class="agent-pipeline__stage {stage_classes[index]}"><span class="agent-pipeline__dot"></span><span class="agent-pipeline__label">{html.escape(label)}</span></div>'
-        for index, (label, _) in enumerate(stages)
-    )
     queue=status.get("queue") or {}
     queue_note=""
     if queued:
@@ -575,14 +626,37 @@ def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
         if queued:
             timing_note=f"Estimated queue and generation time: {_duration_label(remaining)}"
         elif remaining is not None:
-            timing_note=f"Estimated remaining: {_duration_label(remaining)} · current stage typically {_duration_label(stage_eta)}"
+            timing_note=f"Estimated presentation ETA: {_duration_label(remaining)} · current stage: {_duration_label(stage_eta)} left"
+    stage_eta=timing.get("current_stage_eta_seconds")
+    stages_html="".join(
+        (
+            f'<div class="agent-pipeline__stage {stage_classes[index]}">'
+            '<span class="agent-pipeline__dot"></span>'
+            f'<span class="agent-pipeline__label">{html.escape(label)}</span>'
+            f'<span class="agent-pipeline__eta">{html.escape("Done" if stage_classes[index] == "done" else "Failed" if stage_classes[index] == "attention" else "finishing" if stage_classes[index] == "active" and stage_eta == 0 else f"{_countdown_label(stage_eta)} left" if stage_classes[index] == "active" else f"est. {_countdown_label(_pipeline_stage_budget(label))}")}</span>'
+            '</div>'
+        )
+        for index, (label, _) in enumerate(stages)
+    )
+    overall_eta=""
+    if not completed and not failed and timing.get("estimated_remaining_seconds") is not None:
+        overall_eta=f'<div class="agent-pipeline__overall">Pipeline ETA · {_countdown_label(timing["estimated_remaining_seconds"])} remaining</div>'
+    elif completed:
+        overall_eta='<div class="agent-pipeline__overall">Pipeline complete</div>'
+    pipeline_html=(
+        f'<div class="agent-pipeline" style="--agent-count:{len(stages)}">'
+        '<div class="agent-pipeline__header"><div>'
+        '<div class="agent-pipeline__eyebrow">Agent pipeline</div>'
+        f'<div class="agent-pipeline__summary">{html.escape(summary)}</div>'
+        f'</div><div><div class="agent-pipeline__count">{completed_count}/{len(stages)} complete</div>{overall_eta}</div></div>'
+        f'<div class="agent-pipeline__rail">{stages_html}</div>'
+        f'<div class="agent-pipeline__footer"><div class="agent-pipeline__current">{html.escape(str(detail or "Waiting to start"))}</div>'
+        f'<span class="agent-pipeline__state {state_class}"><i></i>{state_label}{queue_note}</span></div>'
+        f'{f"<div class=\"agent-pipeline__timing\">{html.escape(timing_note)} · estimate only; provider and queue time can vary.</div>" if timing_note else ""}'
+        '</div>'
+    )
     st.markdown(
-        f'''<section class="agent-pipeline" style="--agent-count:{len(stages)}">
-          <div class="agent-pipeline__header"><div><div class="agent-pipeline__eyebrow">Agent pipeline</div><div class="agent-pipeline__summary">{html.escape(summary)}</div></div><div class="agent-pipeline__count">{completed_count}/{len(stages)} complete</div></div>
-          <div class="agent-pipeline__rail">{stages_html}</div>
-          <div class="agent-pipeline__footer"><div class="agent-pipeline__current">{html.escape(str(detail or "Waiting to start"))}</div><span class="agent-pipeline__state {state_class}"><i></i>{state_label}{queue_note}</span></div>
-          {f'<div class="agent-pipeline__timing">{html.escape(timing_note)} · estimate only; provider and queue time can vary.</div>' if timing_note else ''}
-        </section>''',
+        pipeline_html,
         unsafe_allow_html=True,
     )
 
@@ -752,6 +826,8 @@ if job:=st.session_state.get("job"):
             status={"status":opened["status"],"progress":100 if opened["status"]=="COMPLETED" else 0,"current_stage":opened["status"]}
         job["status"]=status.get("status")
         st.session_state.job=job
+        if job.get("job_id"):
+            render_job_eta_clock(status)
         render_agent_pipeline(status)
         if status["status"]=="COMPLETED":
             deck=httpx.get(f"{API}/api/presentations/{job['presentation_id']}",headers=ACCESS_HEADERS).json(); st.success("Presentation ready")

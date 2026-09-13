@@ -33,6 +33,7 @@ class BriefSlide(BaseModel):
     slide_number: int
     title: str
     subtitle: str | None = None
+    purpose: str | None = None
     layout_type: LayoutType
     requirements: list[str] = Field(default_factory=list)
     elements: list[SlideElement] = Field(default_factory=list)
@@ -51,10 +52,14 @@ class BriefSlide(BaseModel):
         if not elements:
             for item in self.requirements:
                 heading, separator, detail=item.partition(" (")
-                body=detail.rstrip("). ") if separator else f"Explain {heading.strip()} in practical terms."
+                # A bare label is a contract, not visible copy. Leave its
+                # explanation for the content agent rather than leaking an
+                # internal placeholder such as "Explain X in practical
+                # terms" into the user's deck.
+                body=detail.rstrip("). ") if separator else ""
                 elements.append(SlideElement(type="card", heading=heading.strip(), body=body))
-        purpose=(f"Explain {self.title} through the requested technical details."
-                 if elements else f"Introduce {self.title}.")
+        purpose=self.purpose or (f"Explain {self.title} through the requested technical details."
+                                 if elements else f"Introduce {self.title}.")
         return SlideSpec(
             slide_number=self.slide_number, title=self.title, subtitle=self.subtitle,
             purpose=purpose, layout_type=self.layout_type, elements=elements,
@@ -169,8 +174,27 @@ class BriefInterpreterAgent:
             r"end[- ]to[- ]end\s+multi[- ]agent\s+orchestration(?:\s+sequence)?|"
             r"detailed\s+(?:enterprise\s+)?data\s+pipeline(?:\s+architecture)?|"
             r"resilience(?:,?\s+fault\s+tolerance)?(?:,?\s+and\s+disaster\s+recovery)?(?:\s+strategy)?|"
-            r"comprehensive\s+capability\s+matrix|phased\s+(?:enterprise\s+)?(?:transformation\s+)?roadmap"
+            r"comprehensive\s+capability\s+matrix|phased\s+(?:enterprise\s+)?(?:transformation\s+)?roadmap|"
+            r"executive\s+mandate|high[- ]level\s+transition\s+framework|"
+            r"detailed\s+scope\s*1\s*(?:&|and)\s*2\s+abatement\s+roadmap|"
+            r"scope\s*3\s+supply\s+chain\s+engagement\s+workflow|"
+            r"enterprise\s+carbon\s+accounting\s+data\s+pipeline(?:\s+architecture)?|"
+            r"risk,?\s+compliance,?\s+and\s+regulatory\s+audit\s+architecture|"
+            r"comparative\s+cost[- ]benefit\s+matrix|multi[- ]year\s+decarbonization\s+milestone\s+roadmap|"
+            # Finance briefs commonly use bracketed chart labels instead of
+            # "Slide N" headings. They are just as binding as a numbered
+            # slide contract and must not be handed to the generic storyteller.
+            r"executive\s+financial\s+summary|\[chart\s*:\s*(?:line|bar|pie|donut)|"
+            r"comprehensive\s+financial\s+metrics\s+data\s+table|"
+            r"high[- ]level\s+go[- ]to[- ]market\s+resource\s+allocation\s+framework|"
+            r"operational\s+efficiency\s+workflow|phased\s+financial\s+optimization\s+roadmap|"
+            r"executive\s+threat\s+landscape\s+summary|"
+            r"comprehensive\s+incident\s+response\s+performance\s+data\s+table|"
+            r"high[- ]level\s+zero[- ]trust\s+architecture\s+data\s+flow|"
+            r"automated\s+threat\s+remediation\s+pipeline|phased\s+enterprise\s+security\s+roadmap"
         )
+        chart_starter=r"\[chart\s*:\s*(?:line|bar|pie|donut)"
+        agenda_pattern=rf"(?:\b(?:{agenda_starters})\b|{chart_starter})"
         if marker:
             remainder=normalized[marker.end():]
         else:
@@ -179,7 +203,7 @@ class BriefInterpreterAgent:
             # binding contract when it contains several unambiguous agenda
             # starters. Requiring three prevents ordinary open-ended prose
             # from being mistaken for a fixed storyboard.
-            if len(re.findall(rf"(?i)\b(?:{agenda_starters})\b", normalized)) < 3:
+            if len(re.findall(rf"(?i){agenda_pattern}", normalized)) < 3:
                 return []
             remainder=normalized
         # Split compact prose only at known slide-agenda starters.  This keeps
@@ -189,9 +213,9 @@ class BriefInterpreterAgent:
         # long component names, while the compact fallback repairs content
         # pasted from chat into one paragraph.
         line_parts=[line.strip() for line in remainder.splitlines() if line.strip()]
-        line_starters=sum(bool(re.match(rf"(?i)^(?:{agenda_starters})\b", line)) for line in line_parts)
+        line_starters=sum(bool(re.match(rf"(?i)^(?:{agenda_starters})\b|^{chart_starter}", line)) for line in line_parts)
         compact_parts=re.split(
-            rf"(?i)(?=\b(?:{agenda_starters})\b)",
+            rf"(?i)(?={agenda_pattern})",
             remainder,
         )
         source_lines=line_parts if line_starters >= 3 else (compact_parts if len(compact_parts) >= 3 else line_parts)
@@ -204,7 +228,7 @@ class BriefInterpreterAgent:
             # deck instructions. Those instructions describe the renderer,
             # not extra roadmap phases or visible slide content.
             line=re.split(
-                r"(?i)\s+(?=(?:use\s+native|do\s+not|keep\s+|maintain\s+|ensure\s+|theme\s*:|style\s*:))",
+                r"(?i)\s+(?=(?:use\s+native|use\s+a\s+(?:sustainability|industrial|dark|light|corporate)|do\s+not|keep\s+|maintain\s+|ensure\s+|theme\s*:|style\s*:))",
                 line,
                 maxsplit=1,
             )[0].strip()
@@ -216,7 +240,7 @@ class BriefInterpreterAgent:
             # A real prose contract names the slide topic or its requested
             # visual. Do not accidentally convert a paragraph of general
             # instructions into a slide list.
-            if re.match(r"(?i)^(?:title|business|proposed|detailed|agentic|azure|security|scalability|cost|implementation|market|solution|problem|roadmap|architecture|conclusion|summary|executive|current|high[- ]level|end[- ]to[- ]end|resilience|comprehensive|phased)\b", line):
+            if re.match(r"(?i)^(?:title|business|proposed|detailed|agentic|azure|security|scalability|cost|implementation|market|solution|problem|roadmap|architecture|conclusion|summary|executive|current|high[- ]level|end[- ]to[- ]end|resilience|comprehensive|phased|scope\s*3|enterprise\s+carbon|risk|comparative|multi[- ]year|operational|automated|\[chart\s*:)", line):
                 lines.append(line)
             elif lines:
                 # Permit a wrapped continuation line, preserving its words in
@@ -245,11 +269,19 @@ class BriefInterpreterAgent:
     @staticmethod
     def _prose_deck_title(normalized: str) -> str | None:
         """Recognise an unquoted executive deck title on the first line."""
+        heading=re.search(r"(?m)^\s*#+\s+(.+?)\s*$", normalized)
+        if heading:
+            return heading.group(1).strip()
         first=next((line.strip() for line in normalized.splitlines() if line.strip()), "")
+        first=re.sub(r"^#+\s*", "", first)
         if not first or re.match(r"(?i)^(?:title\s+slide|slides?\s*:)", first):
             return None
         if re.search(r"(?i)\b(?:deck|presentation)\b", first) and len(first) <= 120:
             return re.sub(r"(?i)\s+(?:deck|presentation)\s*$", "", first).strip()
+        # A Markdown heading directly followed by a title-slide agenda item
+        # is an unquoted deck title, even when it does not end in "Deck".
+        if re.search(r"(?im)^\s*title\s+slide\b", normalized) and len(first) <= 120:
+            return first
         return None
 
     @staticmethod
@@ -274,29 +306,132 @@ class BriefInterpreterAgent:
     def _prose_slide(self, number: int, line: str, deck_title: str | None) -> BriefSlide:
         """Create a protected native-layout contract from one prose line."""
         lower=line.lower()
-        label=re.split(r"\s*(?:—|–|-)\s*", line, maxsplit=1)[0].strip()
+        # Only treat a spaced dash as a title/detail separator. A bare hyphen
+        # belongs to legitimate labels such as "High-Level" or "Net-Zero".
+        label=re.split(r"\s+(?:—|–|-)\s+", line, maxsplit=1)[0].strip()
         tail=re.split(r"\b(?:showing|covering|using|divided into|comparing|with)\b", line, maxsplit=1, flags=re.I)
         listed=self._listed_items(tail[1]) if len(tail) == 2 else []
         layout=LayoutType.feature_grid
         title=label.rstrip(".")
         elements=[]
         table_data=None
+        chart_data=None
         instruction=None
         native_diagram=False
+        purpose=None
         if lower.startswith("title"):
             layout=LayoutType.title_slide
             title=deck_title or "Enterprise presentation"
+            purpose="Executive posture review covering threat exposure, response readiness, and zero-trust control maturity."
         elif lower.startswith("business"):
             title="Business problem"; listed=listed or ["Fragmented enterprise knowledge", "Manual workflows", "Slow decision-making", "Hallucination risks"]
-        elif lower.startswith("executive thesis"):
+        elif lower.startswith("executive financial summary"):
+            title="Executive financial summary"; layout=LayoutType.key_metrics
+            elements=[
+                SlideElement(type="metric", heading="Net revenue retention", value="118%", body="Retains and expands recurring revenue."),
+                SlideElement(type="metric", heading="Gross margin", value="78%", body="Supports efficient scaled delivery."),
+                SlideElement(type="metric", heading="Free cash flow", value="Positive", body="Funds disciplined growth investment."),
+            ]
+            instruction="Render the supplied financial measures as large, editable metric callouts. Do not invent an ARR percentage."
+        elif lower.startswith("executive threat landscape summary"):
+            title="Executive threat landscape"; layout=LayoutType.key_metrics
+            elements=[
+                SlideElement(type="metric", heading="Vulnerability volume", value="—", body="Current value not supplied."),
+                SlideElement(type="metric", heading="MTTD", value="—", body="Current value not supplied."),
+                SlideElement(type="metric", heading="MTTR", value="—", body="Current value not supplied."),
+                SlideElement(type="metric", heading="Zero-trust compliance", value="—", body="Current value not supplied."),
+            ]
+            purpose="Executive security metrics. Replace the marked values with the current reporting-period measures."
+            instruction="Render four editable executive metric callouts. Preserve the empty-value state rather than inventing security performance data."
+        elif "[chart:" in lower and re.search(r"\bline\s+(?:graph|chart)\b", lower):
+            title=re.split(r"\bover\s+the\b", re.sub(r"(?i)^\[chart\s*:\s*line\s+(?:graph|chart)\]\s*", "", line), maxsplit=1)[0].strip().rstrip(".") or "Time-series trend"
+            layout=LayoutType.key_metrics
+            endpoints=re.findall(r"(?<![A-Za-z])\$?([\d,]+(?:\.\d+)?)\s*(?:[KMB])?\b", line)
+            if len(endpoints) >= 2:
+                start,end=(float(value.replace(",", "")) for value in endpoints[-2:])
+                values=[round(start+(end-start)*index/11, 2) for index in range(12)]
+                chart_data={"type":"line", "categories":[f"Period {index}" for index in range(1,13)], "series":[{"name":"Illustrative volume", "values":values}]}
+                instruction="Render a native editable line chart. Label the interpolated series as illustrative because the brief provides endpoints rather than every period value."
+            else:
+                instruction="Reserve this slide for a native editable line chart. The brief names the series but does not supply all numeric values, so do not invent reported data."
+        elif "[chart:" in lower and re.search(r"\bbar\s+chart\b", lower):
+            title=re.split(r"\bcomparing\b", re.sub(r"(?i)^\[chart\s*:\s*bar\s+chart\]\s*", "", line), maxsplit=1)[0].strip().rstrip(".") or "Segment comparison"
+            layout=LayoutType.key_metrics
+            pairs=re.findall(r"([A-Za-z][A-Za-z -]+?)\s*\((\d+(?:\.\d+)?)\s*(?:mos?|months?)\)", line, re.I)
+            if pairs:
+                chart_data={"type":"bar", "categories":[name.strip() for name,_ in pairs], "series":[{"name":"Value", "values":[float(value) for _,value in pairs]}]}
+                instruction="Render a native editable bar chart using the supplied numeric values."
+            else:
+                # A requested grouped chart without values should not degrade
+                # into stray labels on a mostly empty slide. Show the exact
+                # editable input matrix instead, so the missing facts are
+                # obvious and users can fill it before regenerating.
+                title="Vulnerability severity input matrix"; layout=LayoutType.comparison
+                table_data={
+                    "headers":["Severity", "On-premise", "Multi-cloud", "Containerized"],
+                    "rows":[[severity, "Not supplied", "Not supplied", "Not supplied"] for severity in ("Critical", "High", "Medium", "Low")],
+                }
+                purpose="Populate this severity-by-environment matrix to generate the requested native grouped bar chart."
+                instruction="Render the editable source-data matrix. Do not fabricate vulnerability counts."
+        elif "[chart:" in lower and re.search(r"\b(?:pie|donut)\s+chart\b", lower):
+            title=re.split(r"\b(?:showing|by)\b", re.sub(r"(?i)^\[chart\s*:\s*(?:pie|donut)(?:/donut)?\s+chart\]\s*", "", line), maxsplit=1)[0].strip().rstrip(".") or "Distribution breakdown"
+            layout=LayoutType.key_metrics
+            pairs=re.findall(r"(?:showing\s+|,\s*)?([^,()]+?)\s*\((\d+(?:\.\d+)?)%\)", line, re.I)
+            cleaned=[(re.sub(r"(?i)^(?:showing|and)\s+", "", name).strip(), float(value)) for name,value in pairs]
+            if len(cleaned) >= 2:
+                chart_data={"type":"doughnut", "categories":[name for name,_ in cleaned], "series":[{"name":"Distribution (%)", "values":[value for _,value in cleaned]}]}
+                instruction="Render a native editable doughnut chart with visibly distinct slice colours and the supplied percentages."
+            else:
+                instruction="Reserve this slide for a native editable doughnut chart; do not invent a distribution without supplied percentages."
+        elif lower.startswith(("comprehensive financial metrics data table", "comprehensive incident response performance data table")):
+            title="Q3 financial metrics: target vs. actual" if "financial" in lower else "Q2 incident response performance"
+            layout=LayoutType.comparison
+            pairs=re.findall(r"(?:for\s+|,\s*|and\s+)([A-Za-z][A-Za-z0-9 -]+?)\s*\(([^()]+?)\s+(?:target\s+)?vs\.?\s+([^()]+?)(?:\s+actual)?\)", line, re.I)
+            if pairs:
+                table_data={"headers":["Metric", "Target", "Actual"], "rows":[[re.sub(r"(?i)^and\s+", "", name).strip(), target.strip(), actual.strip()] for name,target,actual in pairs]}
+            instruction="Render the supplied measures as a native editable PowerPoint table."
+        elif lower.startswith("high-level go-to-market resource allocation framework"):
+            title="Go-to-market resource allocation"; layout=LayoutType.process_flow
+            listed=["Marketing spend", "Inbound funnel optimization", "Enterprise sales expansion", "Customer success retention engines"]
+            native_diagram=True; instruction="Render all four go-to-market engines as an editable connected framework."
+        elif lower.startswith("operational efficiency workflow"):
+            title="Operational efficiency workflow"; layout=LayoutType.process_flow
+            listed=["Infrastructure cost reduction", "LLM token optimization", "Automated provisioning", "Cloud resource rightsizing"]
+            native_diagram=True; instruction="Render all four efficiency stages as an editable connected workflow."
+        elif lower.startswith("high-level zero-trust architecture data flow"):
+            title="Zero-trust architecture data flow"; layout=LayoutType.process_flow
+            detail=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else []
+            native_diagram=True; instruction="Render every named security component as an editable connected left-to-right architecture flow."
+        elif lower.startswith("automated threat remediation pipeline"):
+            title="Automated threat remediation pipeline"; layout=LayoutType.process_flow
+            detail=re.split(r"\bmapping\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else []
+            native_diagram=True; instruction="Render every named remediation stage as an editable connected workflow."
+        elif lower.startswith("phased enterprise security roadmap"):
+            title="Enterprise security roadmap"; layout=LayoutType.process_flow
+            detail=re.split(r"\bdivided into\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else []
+            native_diagram=True; instruction="Render all four security phases as an editable left-to-right roadmap."
+        elif lower.startswith("phased financial optimization roadmap"):
+            title="Financial optimization roadmap"; layout=LayoutType.process_flow
+            listed=["Cost containment", "Gross margin expansion", "Automated scaling", "Profitable market dominance"]
+            native_diagram=True; instruction="Render all four phases as an editable left-to-right roadmap."
+        elif lower.startswith(("executive thesis", "executive mandate")):
             title="Executive thesis: autonomous fulfillment"
-            elements=[SlideElement(type="statement", heading="From reactive to predictive operations", body="Move from disruption response to continuous sensing, planning, and resilient fulfillment.")]
+            if lower.startswith("executive mandate"):
+                title="Executive mandate"
+                elements=[SlideElement(type="card", heading=item, body="") for item in [
+                    "Absolute operational decarbonization", "Regulatory compliance (CSRD/SEC)", "Supply-chain accountability",
+                ]]
+            else:
+                elements=[SlideElement(type="statement", heading="From reactive to predictive operations", body="Move from disruption response to continuous sensing, planning, and resilient fulfillment.")]
         elif lower.startswith("current state"):
             title="Current state vulnerability map"
             detail=re.split(r"\b(?:dissecting|covering|mapping)\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
         elif lower.startswith("high-level"):
-            title="High-level solution architecture"; layout=LayoutType.process_flow
+            title=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)[0].strip().rstrip("."); layout=LayoutType.process_flow
             detail=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
             native_diagram=True; instruction="Render every named system as an editable, connected left-to-right architecture flow. Do not replace nodes with generic cards."
@@ -310,6 +445,21 @@ class BriefInterpreterAgent:
             detail=re.split(r"\b(?:mapping|using|showing)\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
             native_diagram=True; instruction="Render every named data component as an editable connected pipeline. Use two rows if required; omit no named technologies."
+        elif lower.startswith("detailed scope"):
+            title="Scope 1 and 2 abatement roadmap"; layout=LayoutType.process_flow
+            detail=re.split(r"\bcovering\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
+            native_diagram=True; instruction="Render every named abatement initiative as an editable connected roadmap."
+        elif lower.startswith("scope 3"):
+            title="Scope 3 supply-chain engagement workflow"; layout=LayoutType.process_flow
+            detail=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
+            native_diagram=True; instruction="Render every named supplier engagement stage as an editable connected workflow."
+        elif lower.startswith("enterprise carbon"):
+            title="Enterprise carbon-accounting data pipeline"; layout=LayoutType.process_flow
+            detail=re.split(r"\bcombining\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
+            native_diagram=True; instruction="Render every named carbon-data system as an editable connected pipeline."
         elif lower.startswith("proposed solution"):
             title="Enterprise agentic AI platform"; layout=LayoutType.process_flow
             if "→" in line:
@@ -387,6 +537,11 @@ class BriefInterpreterAgent:
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
             layout=LayoutType.architecture_layers; native_diagram=True
             instruction="Render every named resilience mechanism as editable architecture layers; retain the supplied control names."
+        elif lower.startswith("risk"):
+            title="Risk, compliance, and regulatory audit architecture"; layout=LayoutType.architecture_layers
+            detail=re.split(r"\bcovering\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
+            native_diagram=True; instruction="Render every named audit and compliance control as editable architecture layers."
         elif lower.startswith("comprehensive capability matrix"):
             title="Capability comparison matrix"; layout=LayoutType.comparison
             compared=re.search(r"\bcomparing\s+(.+?)\s+across\s+(.+?)(?:\.|$)", line, re.I)
@@ -403,12 +558,25 @@ class BriefInterpreterAgent:
             detail=re.split(r"\bdivided into\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
             native_diagram=True; instruction="Render every named phase as an editable left-to-right roadmap."
+        elif lower.startswith("comparative"):
+            title="Cost-benefit analysis: decarbonization strategies"; layout=LayoutType.comparison
+            compared=re.search(r"\bevaluating\s+(.+?)\s+across\s+(.+?)(?:\.|$)", line, re.I)
+            rows=self._sequence_items(compared.group(1)) if compared else ["Traditional offsets", "Transitional efficiency", "Structural decarbonization"]
+            columns=self._sequence_items(compared.group(2)) if compared else ["Capital expenditure", "Timeline", "Long-term risk reduction"]
+            table_data=self._qualitative_matrix(rows, ["Strategy", *[item.title() for item in columns]])
+            listed=[]
+            instruction="Render this requested comparison as a native editable table. Use qualitative values and never leave table cells blank."
+        elif lower.startswith("multi-year"):
+            title="Multi-year decarbonization roadmap"; layout=LayoutType.process_flow
+            detail=re.split(r"\bdivided into\b", line, maxsplit=1, flags=re.I)
+            listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
+            native_diagram=True; instruction="Render every named milestone phase as an editable left-to-right roadmap."
         if not elements:
-            elements=[SlideElement(type="card", heading=item, body=f"Explain {item} in the enterprise platform context.") for item in listed]
+            elements=[SlideElement(type="card", heading=item, body="") for item in listed]
         return BriefSlide(
             slide_number=number, title=title, layout_type=layout, requirements=[item.heading or "" for item in elements],
             elements=elements, table_data=table_data, exact_element_count=len(elements) if elements else None,
-            content_instruction=instruction, native_diagram=native_diagram,
+            chart_data=chart_data, content_instruction=instruction, native_diagram=native_diagram, purpose=purpose,
         )
 
     def classify(self, prompt: str) -> PromptClassification:

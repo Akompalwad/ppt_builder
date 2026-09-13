@@ -514,7 +514,7 @@ def comparison_rows(slide, spec, d):
         add_text(slide,element_text(item),MARGIN+5.15,y+.23,5.98,.40,15,d.text_secondary)
 
 def evidence_strip(slide, spec, d):
-    items=spec.elements[:3]; count=max(1,len(items)); gap=.38; width=(W-2*MARGIN-gap*(count-1))/count
+    items=spec.elements[:4]; count=max(1,len(items)); gap=.22 if count == 4 else .38; width=(W-2*MARGIN-gap*(count-1))/count
     for index,item in enumerate(items):
         x=MARGIN+index*(width+gap)
         add_shape(slide,MSO_AUTO_SHAPE_TYPE.RECTANGLE,x,CONTENT_Y,.08,3.62,d.primary_color,d.primary_color)
@@ -523,8 +523,10 @@ def evidence_strip(slide, spec, d):
             # Explicit user-supplied figures are evidence, not supporting
             # prose.  Give them the visual weight requested by a metrics
             # slide and keep the label/body inside the same measured lane.
-            add_text(slide,str(item.value),x+.28,CONTENT_Y+.65,width-.38,.64,32,d.accent_color,True,font=d.font_heading)
-            add_text(slide,item.heading or "Metric",x+.28,CONTENT_Y+1.44,width-.38,.56,18,d.text_primary,True,font=d.font_heading)
+            metric_size=27 if count == 4 else 32
+            heading_size=16 if count == 4 else 18
+            add_text(slide,str(item.value),x+.28,CONTENT_Y+.65,width-.38,.64,metric_size,d.accent_color,True,font=d.font_heading)
+            add_text(slide,item.heading or "Metric",x+.28,CONTENT_Y+1.44,width-.38,.56,heading_size,d.text_primary,True,font=d.font_heading)
             supporting_copy=element_text(item)
             # Last-line defence: raw provider output can bypass a previous
             # QA pass during slide editing.  Never show a metric's numeric
@@ -611,6 +613,23 @@ def validated_chart_data(spec) -> tuple[list[str], list[tuple[str, list[float]]]
         normalized.append((str(item.get("name") or "Series").strip() or "Series", values))
     return labels, normalized, str(raw.get("type") or "column").lower()
 
+def chart_palette(d, count: int) -> list[str]:
+    """Return visibly distinct chart colours while respecting the deck theme."""
+    candidates=[d.primary_color, d.secondary_color, d.accent_color, d.success_color, d.warning_color]
+    palette=[]
+    for colour in candidates:
+        normalized=colour.upper()
+        if normalized not in {value.upper() for value in palette}:
+            palette.append(colour)
+    # A prompt may deliberately use one brand colour for every token. Charts
+    # still need distinguishable series/slices, so add restrained fallbacks.
+    for colour in ("#A78BFA", "#38BDF8", "#F59E0B", "#FB7185", "#34D399"):
+        if len(palette) >= count:
+            break
+        if colour.upper() not in {value.upper() for value in palette}:
+            palette.append(colour)
+    return [palette[index % len(palette)] for index in range(max(1, count))]
+
 def native_chart(slide, spec, d) -> bool:
     """Add an editable PowerPoint chart only when factual chart data exists."""
     payload=validated_chart_data(spec)
@@ -618,16 +637,41 @@ def native_chart(slide, spec, d) -> bool:
     categories, series, kind=payload
     chart_data=CategoryChartData(); chart_data.categories=categories
     for name, values in series: chart_data.add_series(name, values)
-    chart_type=XL_CHART_TYPE.BAR_CLUSTERED if kind in {"bar", "bar_clustered"} else XL_CHART_TYPE.COLUMN_CLUSTERED
+    chart_type={
+        "bar": XL_CHART_TYPE.BAR_CLUSTERED,
+        "bar_clustered": XL_CHART_TYPE.BAR_CLUSTERED,
+        "bar_stacked": XL_CHART_TYPE.BAR_STACKED,
+        "stacked_bar": XL_CHART_TYPE.BAR_STACKED,
+        "column_stacked": XL_CHART_TYPE.COLUMN_STACKED,
+        "stacked_column": XL_CHART_TYPE.COLUMN_STACKED,
+        "line": XL_CHART_TYPE.LINE_MARKERS,
+        "line_markers": XL_CHART_TYPE.LINE_MARKERS,
+        "pie": XL_CHART_TYPE.DOUGHNUT,
+        "donut": XL_CHART_TYPE.DOUGHNUT,
+        "doughnut": XL_CHART_TYPE.DOUGHNUT,
+    }.get(kind, XL_CHART_TYPE.COLUMN_CLUSTERED)
     frame=slide.shapes.add_chart(chart_type, Inches(MARGIN+.25), Inches(2.03), Inches(11.55), Inches(4.25), chart_data)
-    chart=frame.chart; chart.has_legend=len(series)>1
-    if chart.has_legend: chart.legend.position=XL_LEGEND_POSITION.BOTTOM
-    chart.value_axis.has_major_gridlines=True
-    chart.value_axis.tick_labels.font.size=Pt(11); chart.category_axis.tick_labels.font.size=Pt(11)
+    chart=frame.chart; chart.has_title=False; chart.has_legend=len(series)>1 or chart_type == XL_CHART_TYPE.DOUGHNUT
+    if chart.has_legend:
+        chart.legend.position=XL_LEGEND_POSITION.BOTTOM
+        chart.legend.font.size=Pt(11)
+        chart.legend.font.color.rgb=rgb(d.text_secondary)
+    if chart_type != XL_CHART_TYPE.DOUGHNUT:
+        chart.value_axis.has_major_gridlines=True
+        chart.value_axis.tick_labels.font.size=Pt(11); chart.category_axis.tick_labels.font.size=Pt(11)
+        chart.value_axis.tick_labels.font.color.rgb=rgb(d.text_secondary)
+        chart.category_axis.tick_labels.font.color.rgb=rgb(d.text_secondary)
     plot=chart.plots[0]
+    colours=chart_palette(d, len(categories) if chart_type == XL_CHART_TYPE.DOUGHNUT else len(series))
     for index, chart_series in enumerate(plot.series):
-        chart_series.format.fill.solid(); chart_series.format.fill.fore_color.rgb=rgb(d.primary_color if index == 0 else d.secondary_color)
-        chart_series.format.line.color.rgb=rgb(d.primary_color if index == 0 else d.secondary_color)
+        if chart_type == XL_CHART_TYPE.DOUGHNUT:
+            for point_index, point in enumerate(chart_series.points):
+                point.format.fill.solid(); point.format.fill.fore_color.rgb=rgb(colours[point_index])
+                point.format.line.color.rgb=rgb(colours[point_index])
+            continue
+        chart_series.format.fill.solid()
+        chart_series.format.fill.fore_color.rgb=rgb(colours[index])
+        chart_series.format.line.color.rgb=rgb(colours[index])
     return True
 
 def asymmetric_insight(slide, spec, d):

@@ -1,4 +1,5 @@
 import zipfile
+from datetime import datetime, timedelta, timezone
 
 from app.schemas.presentation import CreatePresentationRequest
 from app.agents.orchestrator import PresentationOrchestrator, auto_theme_for_topic, resolve_theme
@@ -9,10 +10,12 @@ from app.rendering.pptx_builder import build_presentation
 from app.rendering.web_renderer import render_slide_html
 from app.agents.qa_agent import PresentationQAAgent, summarize_point, topic_matches_deck
 from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
-from app.agents.design_agent import DesignDirectorAgent
+from app.agents.design_agent import DesignDirectorAgent, validated_palette
 from app.services.image_service import ImageService
 from app.services.generation_queue import GenerationQueue
 from app.config import Settings
+from app.models.database import GenerationJob
+from app.services.presentation_service import PresentationService
 from pptx import Presentation
 
 def test_generation_queue_snapshot_reports_waiting_depth():
@@ -24,6 +27,45 @@ def test_generation_queue_snapshot_reports_waiting_depth():
     assert snapshot["queue_depth"] == 3
     assert snapshot["jobs_ahead"] == 2
     assert snapshot["position"] == 2
+
+def test_stage_eta_counts_down_from_the_active_stage_start():
+    started=datetime.now(timezone.utc)-timedelta(seconds=12)
+    job=GenerationJob(
+        presentation_id="presentation", status="RUNNING", progress=28,
+        current_stage="Slide Content Agent — drafting slides", created_at=started,
+        stage_started_at=started,
+    )
+    timing=PresentationService._timing_estimate(job)
+    assert timing["current_stage_elapsed_seconds"] >= 11
+    assert 0 <= timing["current_stage_eta_seconds"] <= 79
+    assert timing["estimated_remaining_seconds"] >= timing["current_stage_eta_seconds"]
+    # Content is only one part of the run: the overall ETA reserves time for
+    # storyline, visual assets, QA, and editable PPTX export too.
+    assert timing["estimated_remaining_seconds"] >= 200
+
+def test_content_eta_reserves_time_for_each_remaining_slide_call():
+    now=datetime.now(timezone.utc)
+    job=GenerationJob(
+        presentation_id="presentation", status="RUNNING", progress=50,
+        current_stage="Slide Content Agent — drafting slide 7/10: operating guardrails",
+        created_at=now, stage_started_at=now,
+    )
+    timing=PresentationService._timing_estimate(job)
+    # Active slide + 3 later slide requests + Story/Visuals/QA/Export.
+    assert timing["estimated_remaining_seconds"] >= 480
+
+def test_persisted_pipeline_eta_does_not_jump_when_content_starts():
+    started=datetime.now(timezone.utc)-timedelta(seconds=60)
+    job=GenerationJob(
+        presentation_id="presentation", status="RUNNING", progress=25,
+        current_stage="Slide Content Agent — drafting slide 1/10: opening",
+        created_at=started, stage_started_at=datetime.now(timezone.utc),
+        estimated_total_seconds=PresentationService._pipeline_total_budget(10),
+    )
+    timing=PresentationService._timing_estimate(job)
+    # 16:00 at creation becomes roughly 15:00 after the early agents; it
+    # must not jump back to 16:00 when the content agent starts.
+    assert 895 <= timing["estimated_remaining_seconds"] <= 900
 
 def test_fallback_and_pptx(tmp_path):
     spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic="AI adoption",slide_count=4))
@@ -139,6 +181,27 @@ Use an industrial-tech color scheme featuring deep slate gray, steel blue, and h
     matrix=brief.by_number(9)
     assert matrix.table_data["rows"][2] == ["autonomous multi-agent systems", "High", "Short", "Predictive"]
     assert resolve_theme("Auto", prompt).name == "Industrial Steel"
+
+def test_sustainability_agenda_preserves_nine_slides_without_placeholder_copy():
+    prompt='''Global Net-Zero Enterprise Transition Deck
+Title slide featuring a corporate sustainability vision statement. Executive mandate — shifting to absolute operational decarbonization, strict regulatory compliance (CSRD/SEC), and supply chain accountability. High-level transition framework showing enterprise baseline audit → capital allocation → operational transformation → carbon accounting → verified reporting. Detailed Scope 1 & 2 abatement roadmap covering facilities electrification, fleet transition to EV, on-site renewable energy generation, and green power purchase agreements (PPAs). Scope 3 supply chain engagement workflow showing supplier carbon data collection, automated supplier grading, green procurement incentives, and high-emission vendor phase-out. Enterprise carbon accounting data pipeline architecture combining IoT energy meters, ERP procurement data, utility API ingestion, blockchain audit trail, and centralized ESG data warehouse. Risk, compliance, and regulatory audit architecture covering multi-jurisdiction reporting standards, third-party verification workflows, secure audit logs, and penalty mitigation tracking. Comparative cost-benefit matrix evaluating traditional offsets, transitional efficiency measures, and deep structural decarbonization across capital expenditure, timeline, and long-term risk reduction. Multi-year decarbonization milestone roadmap divided into foundation building (Years 1-2), operational scaling (Years 3-5), supply chain integration (Years 6-8), and net-zero realization (Year 10). Use a sustainability-focused corporate tech theme featuring deep forest green, slate charcoal, and crisp mint accent highlights.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=8)
+    assert len(brief.slides) == 9
+    assert brief.by_number(3).title == "High-level transition framework"
+    assert [item.heading for item in brief.by_number(9).elements][-1] == "net-zero realization (Year 10)"
+    assert all("Explain " not in (item.body or "") for slide in brief.slides for item in slide.elements)
+    assert resolve_theme("Auto", prompt).name == "Sustainable Forest"
+
+def test_model_palette_requires_valid_hex_diversity_and_contrast():
+    valid={
+        "background_color":"#18241F", "surface_color":"#294036", "primary_color":"#347453",
+        "secondary_color":"#7DAE91", "accent_color":"#9BE0B7", "header_color":"#F3F8F4",
+        "text_primary":"#F3F8F4", "text_secondary":"#D2E0D6", "muted_text":"#99B0A1",
+    }
+    palette=validated_palette(valid, resolve_theme("Auto", "AI platform"))
+    assert palette and palette.name == "Prompt Brand Palette"
+    invalid={**valid, "text_primary":"#1A2A20"}
+    assert validated_palette(invalid, resolve_theme("Auto", "AI platform")) is None
 
 def test_structured_stress_brief_keeps_native_table_and_five_step_roadmap(tmp_path):
     prompt='''Create an intensive 6-slide deck. Slide 1: Title Slide. The title must be a long phrase: "Project Hyperion: Scaling Global Microservices Infrastructure". Slide 2: The Core Issue. Summarize this into 3 distinct detailed bullet points. Slide 3: System Component Comparison. Generate a 4x4 markdown table. Columns: [Service Name, Current Latency (ms), Target Latency (ms), Risk Level]. Row 1: [AuthGate API Gateway, 450ms, <15ms, Critical Risk / High Priority]. Row 2: [DataStream Ledger Sync, 1,200ms, <50ms, High Risk / Complex Migration]. Row 3: [NotifyEngine PubSub, 85ms, <10ms, Low Risk / Fast Win]. Slide 4: Migration Timeline. A horizontal 5-step engineering roadmap sequence. Step 1: Discovery & Audit, Step 2: Protocol Definition & RFC, Step 3: Canary Deployments in Sandbox, Step 4: Multi-Region Traffic Cutover, Step 5: Legacy Decommissioning & Cleanup. Slide 5: Critical Metrics. Display 3 distinct large percentage metrics side-by-side: 99.999% (Label: Targeted Uptime SLA), -85% (Label: Reduction in P99 API Latency), and $4.2M (Label: Projected Annual Savings). Slide 6: Emergency Contacts. Include an On-Call Matrix with varying contact lengths.'''
@@ -692,6 +755,54 @@ def test_source_backed_chart_is_native_in_pptx_and_web_preview(tmp_path):
     presentation=Presentation(output)
     assert any(shape.has_chart for shape in presentation.slides[0].shapes)
     assert "native-chart-preview" in render_slide_html(spec, 1)
+
+def test_native_chart_renderer_supports_line_doughnut_and_stacked_bar_charts(tmp_path):
+    for chart_type in ("line", "doughnut", "bar_stacked"):
+        spec=PresentationSpec(title="Revenue", topic="SaaS", slides=[SlideSpec(
+            slide_number=1, title="Revenue mix", purpose="Illustrative revenue trend.", layout_type=LayoutType.key_metrics,
+            visual_spec={"chart_data":{"type":chart_type,"categories":["Q1","Q2"],"series":[{"name":"Revenue","values":[10,14]}]}},
+        )])
+        output=build_presentation(spec,tmp_path/f"{chart_type}.pptx")
+        presentation=Presentation(output)
+        assert any(shape.has_chart for shape in presentation.slides[0].shapes)
+
+def test_compact_finance_agenda_preserves_native_chart_and_table_contracts():
+    prompt="""### Global SaaS Financial Performance & Market Share Review
+
+Title slide with a concise enterprise value proposition and executive metadata. Executive financial summary highlighting annual recurring revenue growth, net revenue retention at 118%, gross margin of 78%, and free cash flow positivity. [CHART: Line Graph] Quarterly ARR trajectory over the last 12 quarters, plotting actual performance ($12M to $48M) against projected targets. [CHART: Bar Chart] Customer acquisition cost payback period by segment, comparing Enterprise (14 mos), Mid-Market (9 mos), and SMB (5 mos). [CHART: Pie/Donut Chart] Global revenue distribution by product tier, showing Core SaaS Platform (55%), Usage-Based Compute (25%), Professional Services (12%), and Marketplace Add-ons (8%). Comprehensive financial metrics data table comparing Q3 targets vs. actuals for Gross Churn (0.8% target vs. 0.6% actual), Magic Number (1.2 vs. 1.4), and Rule of 40 (35% vs. 42%). High-level go-to-market resource allocation framework showing marketing spend, inbound funnel optimization, enterprise sales expansion, and customer success retention engines. Operational efficiency workflow mapping infrastructure cost reduction, LLM token optimization, automated provisioning, and cloud resource rightsizing. Phased financial optimization roadmap divided into cost containment, gross margin expansion, automated scaling, and profitable market dominance.
+
+Use native editable PowerPoint shapes, native PowerPoint chart objects, data tables, and text boxes."""
+    agent=BriefInterpreterAgent()
+    classification=agent.classify(prompt)
+    brief=agent.interpret(prompt, requested_count=10)
+    assert classification.mode == "structured"
+    assert brief.deck_title == "Global SaaS Financial Performance & Market Share Review"
+    assert len(brief.slides) == 9
+    assert brief.requested_slide_count == 9
+    assert [slide.chart_data["type"] for slide in brief.slides if slide.chart_data] == ["line", "bar", "doughnut"]
+    table=next(slide.table_data for slide in brief.slides if slide.table_data)
+    assert table["rows"] == [["Gross Churn", "0.8%", "0.6%"], ["Magic Number", "1.2", "1.4"], ["Rule of 40", "35%", "42%"]]
+
+def test_doughnut_chart_assigns_distinct_colours_to_each_slice(tmp_path):
+    spec=PresentationSpec(title="Revenue", topic="SaaS", slides=[SlideSpec(
+        slide_number=1, title="Revenue mix", purpose="Show product revenue distribution.", layout_type=LayoutType.key_metrics,
+        visual_spec={"chart_data":{"type":"doughnut","categories":["Platform","Usage","Services","Add-ons"],"series":[{"name":"Revenue","values":[48,27,15,10]}]}},
+    )])
+    output=build_presentation(spec,tmp_path/"doughnut-colours.pptx")
+    presentation=Presentation(output)
+    chart=next(shape.chart for shape in presentation.slides[0].shapes if shape.has_chart)
+    colours=[str(point.format.fill.fore_color.rgb) for point in chart.series[0].points]
+    assert len(set(colours)) == 4
+
+def test_metrics_strip_keeps_four_explicit_metrics(tmp_path):
+    spec=PresentationSpec(title="Metrics", topic="QA", slides=[SlideSpec(
+        slide_number=1, title="Metric checks", purpose="Validate metric layout.", layout_type=LayoutType.key_metrics,
+        elements=[{"value":value,"heading":f"Metric {index}","body":"Supporting copy."} for index, value in enumerate(("42%", "99.95%", "$1.8M", "7 days"), start=1)],
+    )])
+    output=build_presentation(spec,tmp_path/"four-metrics.pptx")
+    presentation=Presentation(output)
+    text=" ".join(shape.text for shape in presentation.slides[0].shapes if shape.has_text_frame)
+    assert all(value in text for value in ("42%", "99.95%", "$1.8M", "7 days"))
 
 def test_chevron_flow_places_step_details_inside_connected_stages(tmp_path):
     spec=PresentationSpec(title="Pipeline", topic="SOC", slides=[SlideSpec(
