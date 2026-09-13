@@ -537,7 +537,7 @@ def _countdown_label(seconds: object) -> str:
 def _pipeline_stage_budget(label: str) -> int:
     return {
         "Brief": 30, "Theme": 30, "Story": 30, "Content": 90,
-        "Visuals": 25, "QA": 25, "Export": 15,
+        "Visuals": 55, "QA": 50, "Export": 15,
     }.get(label, 45)
 
 

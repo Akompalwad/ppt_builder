@@ -39,11 +39,11 @@ def test_stage_eta_counts_down_from_the_active_stage_start():
     assert timing["current_stage_elapsed_seconds"] >= 11
     assert 0 <= timing["current_stage_eta_seconds"] <= 79
     assert timing["estimated_remaining_seconds"] >= timing["current_stage_eta_seconds"]
-    # Content is only one part of the run: the overall ETA reserves time for
-    # storyline, visual assets, QA, and editable PPTX export too.
+    # Content is only one part of the run: the overall ETA includes storyline,
+    # visual assets, QA, and editable PPTX export too.
     assert timing["estimated_remaining_seconds"] >= 200
 
-def test_content_eta_reserves_time_for_each_remaining_slide_call():
+def test_content_eta_matches_the_visible_pipeline_budget():
     now=datetime.now(timezone.utc)
     job=GenerationJob(
         presentation_id="presentation", status="RUNNING", progress=50,
@@ -51,8 +51,9 @@ def test_content_eta_reserves_time_for_each_remaining_slide_call():
         created_at=now, stage_started_at=now,
     )
     timing=PresentationService._timing_estimate(job)
-    # Active slide + 3 later slide requests + Story/Visuals/QA/Export.
-    assert timing["estimated_remaining_seconds"] >= 480
+    # The pipeline ETA uses the same seven displayed stage budgets; it never
+    # adds a hidden per-slide multiplier.
+    assert 230 <= timing["estimated_remaining_seconds"] <= 300
 
 def test_persisted_pipeline_eta_does_not_jump_when_content_starts():
     started=datetime.now(timezone.utc)-timedelta(seconds=60)
@@ -63,9 +64,12 @@ def test_persisted_pipeline_eta_does_not_jump_when_content_starts():
         estimated_total_seconds=PresentationService._pipeline_total_budget(10),
     )
     timing=PresentationService._timing_estimate(job)
-    # 16:00 at creation becomes roughly 15:00 after the early agents; it
-    # must not jump back to 16:00 when the content agent starts.
-    assert 895 <= timing["estimated_remaining_seconds"] <= 900
+    # Five minutes at creation becomes roughly four minutes after the early
+    # agents; it must not jump upwards when Content starts.
+    assert 235 <= timing["estimated_remaining_seconds"] <= 240
+
+def test_pipeline_total_equals_the_sum_of_visible_agent_budgets():
+    assert PresentationService._pipeline_total_budget(10) == 300
 
 def test_fallback_and_pptx(tmp_path):
     spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic="AI adoption",slide_count=4))

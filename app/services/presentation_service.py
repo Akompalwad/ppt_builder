@@ -25,11 +25,17 @@ class PresentationService:
 
     @staticmethod
     def _pipeline_total_budget(slide_count: int) -> int:
-        """One monotonic ETA baseline for a new deck generation job."""
-        # Active content call (90s), post-content agents (150s), and every
-        # later slide request (80s). A 10-slide deck starts at 16 minutes;
-        # around slide 7 it naturally lands near eight minutes.
-        return 240 + max(0, slide_count-1)*80
+        """Return the single ETA budget represented by the pipeline UI.
+
+        ``slide_count`` remains part of the public method because jobs persist
+        their estimate at creation time.  The agent pipeline is currently a
+        deck-level workflow, however, so its displayed stage budgets are the
+        authoritative estimate rather than an undisclosed per-slide multiplier.
+        This keeps the flip clock, the pipeline total, and the visible stage
+        labels in agreement.
+        """
+        del slide_count
+        return sum(seconds for _, seconds in PresentationService._PIPELINE_STAGES)
 
     @staticmethod
     def _stage_budget(stage: str) -> int:
@@ -38,7 +44,8 @@ class PresentationService:
         return (
             90 if "slide content" in stage or "drafting" in stage else
             30 if any(token in stage for token in ("brief", "theme", "storyline", "design director")) else
-            25 if any(token in stage for token in ("visual asset", "image", "qa", "quality")) else
+            55 if any(token in stage for token in ("visual asset", "image")) else
+            50 if any(token in stage for token in ("qa", "quality")) else
             15 if any(token in stage for token in ("renderer", "pptx", "composing")) else 45
         )
 
@@ -47,8 +54,7 @@ class PresentationService:
         """Return the downstream budget for the current stage plus all agents.
 
         The stage strings are intentionally human-readable, so this maps them
-        back to the same seven groups shown in the UI. A content agent drafting
-        slide 3/10 reserves time for its remaining slide calls as well.
+        back to the same seven groups shown in the UI.
         """
         lower=stage.lower()
         if "brief" in lower or "classification" in lower:
@@ -68,14 +74,6 @@ class PresentationService:
         else:
             index=2
         remaining=sum(seconds for _, seconds in cls._PIPELINE_STAGES[index:])
-        slide_match=re.search(r"slide\s+(\d+)\s*/\s*(\d+)", lower)
-        if index == 2 and slide_match:
-            current, total=(int(value) for value in slide_match.groups())
-            # Each later slide is a separate cloud request. A 10-slide deck
-            # at slide 7 therefore still reserves roughly eight minutes when
-            # the active slide, three remaining calls, visuals, QA, and PPTX
-            # export are all included—not merely the active call's timeout.
-            remaining+=max(0, total-current)*80
         return remaining
 
     @staticmethod
@@ -106,9 +104,9 @@ class PresentationService:
             # than a false promise of an exact start time.
             remaining=min(1800, max(total_budget, (jobs_ahead + 1) * total_budget))
             return {"elapsed_seconds":elapsed, "estimated_remaining_seconds":remaining, "current_stage_eta_seconds":stage_budget, "current_stage_elapsed_seconds":stage_elapsed, "is_estimate":True}
-        # Do not re-estimate upwards when the content stage begins. This is a
-        # real countdown from the budget set at job creation. The stage-aware
-        # floor protects older jobs created before the baseline was persisted.
+        # This is a real countdown from the budget set at job creation. The
+        # stage-aware floor only protects older jobs created before that budget
+        # was persisted.
         baseline_remaining=max(0, total_budget-elapsed)
         stage_aware_remaining=stage_remaining + max(0, pipeline_budget-stage_budget)
         remaining=min(1800, baseline_remaining if job.estimated_total_seconds else max(baseline_remaining, stage_aware_remaining))
