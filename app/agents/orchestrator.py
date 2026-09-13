@@ -6,6 +6,7 @@ from app.agents.design_agent import DesignDirectorAgent
 from app.agents.storyline_agent import StorylineAgent
 from app.agents.slide_content_agent import SlideContentAgent
 from app.agents.brief_agent import BriefInterpreterAgent
+from app.agents.diagram_architect_agent import DiagramArchitectAgent
 from app.config import get_settings
 from datetime import datetime, timezone
 import hashlib
@@ -202,6 +203,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                     raise ValueError("Provider returned a deck unrelated to the requested topic")
                 stage("Storyline Agent — assigning narrative roles", 70)
                 storyline_plan=StorylineAgent().apply(spec)
+                stage("Diagram Architect Agent — mapping nodes and connections", 74)
+                diagram_plans=DiagramArchitectAgent().apply(spec)
                 # The design pass owns only composition and visual direction;
                 # slide wording remains the responsibility of the content and
                 # QA stages.
@@ -224,6 +227,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                         {"slide_count":len(spec.slides),"title":spec.title,"provider":selected_provider,"requests":len(spec.slides) if slide_by_slide else 1},
                     ),
                     trace("Storyline Agent","completed","Assigned a narrative role to every slide before visual composition.",storyline_plan.model_dump()),
+                    trace("Diagram Architect Agent", "completed", "Created explicit native-diagram nodes, edges, and safe topologies.", {"diagrams":[plan.model_dump() for plan in diagram_plans]}),
                     trace("Design Director Agent","completed","Selected slide silhouettes, visual priorities, and motion-ready reveal sequences.",design_plan.model_dump()),
                     trace("Theme Agent","completed","Applied deterministic renderer tokens for the selected theme.",{"theme":spec.design_system.name}),
                     trace("Visual Director","completed","Assigned native-shape visual treatments from each slide specification.",{"treatments":[s.visual_spec.get("treatment","native_shapes") for s in spec.slides]}),
@@ -255,6 +259,8 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             raise ValueError("Local provider returned a deck unrelated to the requested topic")
                         stage("Storyline Agent — assigning narrative roles",70)
                         storyline_plan=StorylineAgent().apply(spec)
+                        stage("Diagram Architect Agent — mapping nodes and connections",74)
+                        diagram_plans=DiagramArchitectAgent().apply(spec)
                         stage("Design Director Agent — selecting layouts and visuals",78)
                         design_plan=DesignDirectorAgent().apply(
                             spec,
@@ -270,6 +276,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                             trace(f"{selected_provider.title()} Content Agent", "fallback", f"{selected_provider.title()} did not produce a usable structured deck; local Ollama continued the job.", {"reason":fallback_reason}),
                             trace("Local Ollama Content Agent", "completed", "Generated one validated canonical slide per request locally.", {"model":settings.ollama_model, "slide_count":len(spec.slides), "ollama_requests":len(spec.slides)}),
                             trace("Storyline Agent", "completed", "Assigned a narrative role to every slide before visual composition.", storyline_plan.model_dump()),
+                            trace("Diagram Architect Agent", "completed", "Created explicit native-diagram nodes, edges, and safe topologies.", {"diagrams":[plan.model_dump() for plan in diagram_plans]}),
                             trace("Design Director Agent", "completed", "Selected slide silhouettes and visual priorities.", design_plan.model_dump()),
                             trace("Presentation QA Agent", "completed", "Recomposed overlong copy into complete slide-sized points.", qa_report),
                         ]
@@ -315,6 +322,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
                 slides.append(SlideSpec(slide_number=number,title=heading,layout_type=layout,purpose=purpose,elements=elements,visual_spec={"treatment":"native_shapes"}))
         stage("COMPOSING",82); spec=PresentationSpec(title=title,subtitle=f"{request.tone} presentation",topic=topic,target_audience=request.audience,language=request.language,theme=theme.name,slides=slides,design_system=theme)
         storyline_plan=StorylineAgent().apply(spec)
+        diagram_plans=DiagramArchitectAgent().apply(spec)
         design_plan=DesignDirectorAgent().apply(
             spec,
             allow_prompt_palette=request.theme == "Auto" and prompt_requests_brand_palette(topic),
@@ -331,6 +339,7 @@ Valid layouts: title_slide, section_slide, step_workflow, feature_grid, architec
             trace("Brief Interpreter Agent", "completed", "Converted explicit slide instructions into protected content and layout contracts.", {"structured":brief.is_structured, "locked_slides":[slide.slide_number for slide in brief.slides], "resolved_slide_count":request.slide_count}),
             trace("Content Validation Agent","completed","Applied concise, presentation-safe deterministic copy.",{"content_policy":"three concise decision-oriented points per content slide"}),
             trace("Storyline Agent","completed","Assigned a varied narrative arc before slide layouts were selected.",storyline_plan.model_dump()),
+            trace("Diagram Architect Agent", "completed", "Created explicit native-diagram nodes, edges, and safe topologies.", {"diagrams":[plan.model_dump() for plan in diagram_plans]}),
             trace("Theme Agent","completed","Resolved the selected theme into deterministic design tokens.",{"theme":theme.name,"primary_color":theme.primary_color}),
             trace("Design Director Agent","completed","Selected varied slide silhouettes and motion-ready reveal sequences.",design_plan.model_dump()),
             trace("Visual Director Agent","completed","Selected native editable PowerPoint shapes rather than flattened images.",{"treatment":"native_shapes"}),

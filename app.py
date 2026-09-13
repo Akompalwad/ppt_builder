@@ -539,7 +539,7 @@ def _countdown_label(seconds: object) -> str:
 
 def _pipeline_stage_budget(label: str) -> int:
     return {
-        "Brief": 30, "Theme": 30, "Story": 30, "Content": 90,
+        "Brief": 30, "Theme": 30, "Story": 30, "Diagram": 5, "Content": 90,
         "Visuals": 55, "QA": 50, "Export": 15,
     }.get(label, 45)
 
@@ -576,7 +576,7 @@ def render_agent_pipeline(status: dict, *, is_slide_edit: bool=False) -> None:
     stages=(
         [("Content", ("slide content", "rewriting", "composing")), ("Visuals", ("visual asset", "design director", "image")), ("QA", ("qa", "quality")), ("Export", ("renderer", "pptx", "updated"))]
         if is_slide_edit else
-        [("Brief", ("brief", "classification", "interpreter")), ("Theme", ("theme",)), ("Content", ("slide content", "composing", "drafting")), ("Story", ("storyline",)), ("Visuals", ("design director", "visual asset", "image")), ("QA", ("qa", "quality")), ("Export", ("renderer", "pptx", "completed"))]
+        [("Brief", ("brief", "classification", "interpreter")), ("Theme", ("theme",)), ("Content", ("slide content", "composing", "drafting")), ("Story", ("storyline",)), ("Diagram", ("diagram architect",)), ("Visuals", ("design director", "visual asset", "image")), ("QA", ("qa", "quality")), ("Export", ("renderer", "pptx", "completed"))]
     )
     job_status=str(status.get("status", "QUEUED")).upper()
     current_stage=str(status.get("current_stage") or "Waiting to start")

@@ -46,6 +46,7 @@ class BriefSlide(BaseModel):
     variable_rows: bool = False
     visual_instruction: str | None = None
     native_diagram: bool = False
+    diagram_kind: str | None = None
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -73,6 +74,7 @@ class BriefSlide(BaseModel):
                 **({"variable_rows":True} if self.variable_rows else {}),
                 **({"brief_visual_instruction":self.visual_instruction} if self.visual_instruction else {}),
                 **({"native_diagram":True, "image_required":False} if self.native_diagram else {}),
+                **({"diagram_kind":self.diagram_kind} if self.diagram_kind else {}),
             },
             metadata={"brief_layout_locked": True, "requested_element_count":self.exact_element_count},
         )
@@ -318,13 +320,20 @@ class BriefInterpreterAgent:
         chart_data=None
         instruction=None
         native_diagram=False
+        diagram_kind=None
         purpose=None
         if lower.startswith("title"):
             layout=LayoutType.title_slide
             title=deck_title or "Enterprise presentation"
             purpose="Executive posture review covering threat exposure, response readiness, and zero-trust control maturity."
         elif lower.startswith("business"):
-            title="Business problem"; listed=listed or ["Fragmented enterprise knowledge", "Manual workflows", "Slow decision-making", "Hallucination risks"]
+            title="Business problem"
+            elements=[
+                SlideElement(type="card", heading="Fragmented enterprise knowledge", body="Information remains spread across repositories, teams, and operational systems."),
+                SlideElement(type="card", heading="Manual workflows", body="Teams spend time locating evidence, coordinating handoffs, and repeating routine decisions."),
+                SlideElement(type="card", heading="Slow decision-making", body="Decision makers wait for context to be assembled before they can act with confidence."),
+                SlideElement(type="card", heading="Hallucination risks", body="Ungrounded model responses can introduce unsupported claims into critical workflows."),
+            ]
         elif lower.startswith("executive financial summary"):
             title="Executive financial summary"; layout=LayoutType.key_metrics
             elements=[
@@ -402,12 +411,12 @@ class BriefInterpreterAgent:
             title="Zero-trust architecture data flow"; layout=LayoutType.process_flow
             detail=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else []
-            native_diagram=True; instruction="Render every named security component as an editable connected left-to-right architecture flow."
+            native_diagram=True; diagram_kind="architecture_map"; instruction="Render every named security component as an editable connected left-to-right architecture flow."
         elif lower.startswith("automated threat remediation pipeline"):
             title="Automated threat remediation pipeline"; layout=LayoutType.process_flow
             detail=re.split(r"\bmapping\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else []
-            native_diagram=True; instruction="Render every named remediation stage as an editable connected workflow."
+            native_diagram=True; diagram_kind="pipeline"; instruction="Render every named remediation stage as an editable connected workflow."
         elif lower.startswith("phased enterprise security roadmap"):
             title="Enterprise security roadmap"; layout=LayoutType.process_flow
             detail=re.split(r"\bdivided into\b", line, maxsplit=1, flags=re.I)
@@ -434,17 +443,17 @@ class BriefInterpreterAgent:
             title=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)[0].strip().rstrip("."); layout=LayoutType.process_flow
             detail=re.split(r"\bshowing\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
-            native_diagram=True; instruction="Render every named system as an editable, connected left-to-right architecture flow. Do not replace nodes with generic cards."
+            native_diagram=True; diagram_kind="architecture_map"; instruction="Render every named system as an editable, connected left-to-right architecture flow. Do not replace nodes with generic cards."
         elif lower.startswith("end-to-end"):
             title="Multi-agent orchestration sequence"; layout=LayoutType.process_flow
             detail=re.split(r"(?:sequence\s*:\s*|\bshowing\b)", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
-            native_diagram=True; instruction="Render each named agent and the human oversight gate as an editable connected workflow."
+            native_diagram=True; diagram_kind="pipeline"; instruction="Render each named agent and the human oversight gate as an editable connected workflow."
         elif lower.startswith("detailed") and "data pipeline" in lower:
             title="Enterprise data pipeline architecture"; layout=LayoutType.process_flow
             detail=re.split(r"\b(?:mapping|using|showing)\b", line, maxsplit=1, flags=re.I)
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
-            native_diagram=True; instruction="Render every named data component as an editable connected pipeline. Use two rows if required; omit no named technologies."
+            native_diagram=True; diagram_kind="pipeline"; instruction="Render every named data component as an editable connected pipeline. Use two rows if required; omit no named technologies."
         elif lower.startswith("detailed scope"):
             title="Scope 1 and 2 abatement roadmap"; layout=LayoutType.process_flow
             detail=re.split(r"\bcovering\b", line, maxsplit=1, flags=re.I)
@@ -473,15 +482,15 @@ class BriefInterpreterAgent:
                 listed=[item[:1].upper() + item[1:] if item else item for item in listed]
             else:
                 listed=["Users", "AI application", "Agent orchestration", "RAG", "LLM", "Enterprise systems"]
-            native_diagram=True; instruction="Render this as a connected native architecture flow. Every named component must be visible and editable."
+            native_diagram=True; diagram_kind="architecture_map"; instruction="Render this as a connected native architecture flow. Every named component must be visible and editable."
         elif "rag pipeline" in lower:
             title="RAG pipeline"; layout=LayoutType.process_flow
             listed=listed or ["Ingestion", "Document processing", "Chunking", "Embeddings", "Vector storage", "Retrieval", "Reranking", "Prompt construction", "Generation"]
-            native_diagram=True; instruction="Render every RAG stage as an editable connected pipeline. Use two rows when needed; do not omit stages."
+            native_diagram=True; diagram_kind="pipeline"; instruction="Render every RAG stage as an editable connected pipeline. Use two rows when needed; do not omit stages."
         elif lower.startswith("agentic workflow"):
             title="Agentic workflow"; layout=LayoutType.process_flow
             listed=listed or ["Planner", "Specialized agents", "Tool calling", "Memory", "Validation", "Human approval"]
-            native_diagram=True; instruction="Render this as an editable connected workflow with a visible human-approval control point."
+            native_diagram=True; diagram_kind="pipeline"; instruction="Render this as an editable connected workflow with a visible human-approval control point."
         elif lower.startswith("azure"):
             title="Azure deployment architecture"; layout=LayoutType.architecture_layers
             elements=[
@@ -490,7 +499,7 @@ class BriefInterpreterAgent:
                 SlideElement(type="tier", heading="Data and AI", body="Blob Storage\nAzure AI Search\nAzure OpenAI"),
                 SlideElement(type="tier", heading="Security and operations", body="Key Vault\nApplication Insights"),
             ]
-            native_diagram=True; instruction="Render four editable Azure architecture layers. Preserve every named Azure service."
+            native_diagram=True; diagram_kind="reference_architecture"; instruction="Render four editable Azure architecture layers. Preserve every named Azure service."
         elif lower.startswith("security architecture"):
             title="Security architecture"; layout=LayoutType.architecture_layers
             elements=[
@@ -499,7 +508,7 @@ class BriefInterpreterAgent:
                 SlideElement(type="tier", heading="AI safety", body="PII protection\nPrompt injection protection"),
                 SlideElement(type="tier", heading="Governance", body="Audit logging"),
             ]
-            native_diagram=True; instruction="Render all security controls as editable architecture layers."
+            native_diagram=True; diagram_kind="reference_architecture"; instruction="Render all security controls as editable architecture layers."
         elif lower.startswith("scalability"):
             title="Scalability and reliability"; layout=LayoutType.architecture_layers
             elements=[
@@ -508,7 +517,7 @@ class BriefInterpreterAgent:
                 SlideElement(type="tier", heading="Fault handling", body="Circuit breakers\nRetries\nDead-letter queues"),
                 SlideElement(type="tier", heading="Operations", body="Observability"),
             ]
-            native_diagram=True; instruction="Render all resilience mechanisms as editable architecture layers."
+            native_diagram=True; diagram_kind="reference_architecture"; instruction="Render all resilience mechanisms as editable architecture layers."
         elif lower.startswith("cost optimization"):
             title="Cost optimization"; layout=LayoutType.comparison
             table_data={
@@ -572,11 +581,31 @@ class BriefInterpreterAgent:
             listed=self._sequence_items(detail[1]) if len(detail) == 2 else listed
             native_diagram=True; instruction="Render every named milestone phase as an editable left-to-right roadmap."
         if not elements:
-            elements=[SlideElement(type="card", heading=item, body="") for item in listed]
+            # Deterministic structured briefs must remain useful when a cloud
+            # content call is unavailable.  Native process diagrams need
+            # editable explanatory copy as well as node labels; otherwise the
+            # browser and downloaded PPTX can diverge depending on which
+            # generation route supplied the slide.
+            rag_copy={
+                "ingestion":"Collect source documents and records from approved enterprise systems.",
+                "document processing":"Clean, normalize, and extract usable text and metadata.",
+                "chunking":"Split documents into retrieval-ready passages while retaining context.",
+                "embeddings":"Convert passages into semantic vectors for similarity search.",
+                "vector storage":"Index vectors and metadata for governed, low-latency retrieval.",
+                "retrieval":"Select the most relevant evidence for the incoming request.",
+                "reranking":"Prioritize retrieved evidence using relevance and policy signals.",
+                "prompt construction":"Combine the request, instructions, and grounded context for the model.",
+                "generation":"Produce a response grounded in approved retrieved evidence.",
+            }
+            elements=[SlideElement(
+                type="card", heading=item,
+                body=rag_copy.get(re.sub(r"\s+", " ", str(item)).strip().casefold(), "Supports the next controlled stage of the enterprise workflow.") if native_diagram else "",
+            ) for item in listed]
         return BriefSlide(
             slide_number=number, title=title, layout_type=layout, requirements=[item.heading or "" for item in elements],
             elements=elements, table_data=table_data, exact_element_count=len(elements) if elements else None,
             chart_data=chart_data, content_instruction=instruction, native_diagram=native_diagram, purpose=purpose,
+            diagram_kind=diagram_kind,
         )
 
     def classify(self, prompt: str) -> PromptClassification:

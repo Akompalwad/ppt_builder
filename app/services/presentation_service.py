@@ -20,7 +20,7 @@ class PresentationService:
     # happen after the content model has returned.
     _PIPELINE_STAGES=(
         ("brief", 30), ("theme", 30), ("content", 90), ("story", 30),
-        ("visuals", 55), ("qa", 50), ("export", 15),
+        ("diagram", 5), ("visuals", 55), ("qa", 50), ("export", 15),
     )
 
     @staticmethod
@@ -44,6 +44,7 @@ class PresentationService:
         return (
             90 if "slide content" in stage or "drafting" in stage else
             30 if any(token in stage for token in ("brief", "theme", "storyline", "design director")) else
+            5 if "diagram architect" in stage else
             55 if any(token in stage for token in ("visual asset", "image")) else
             50 if any(token in stage for token in ("qa", "quality")) else
             15 if any(token in stage for token in ("renderer", "pptx", "composing")) else 45
@@ -65,12 +66,14 @@ class PresentationService:
             index=2
         elif "storyline" in lower or "story" in lower:
             index=3
-        elif any(token in lower for token in ("design director", "visual asset", "image")):
+        elif "diagram architect" in lower:
             index=4
-        elif any(token in lower for token in ("qa", "quality")):
+        elif any(token in lower for token in ("design director", "visual asset", "image")):
             index=5
-        elif any(token in lower for token in ("renderer", "pptx", "composer", "composing")):
+        elif any(token in lower for token in ("qa", "quality")):
             index=6
+        elif any(token in lower for token in ("renderer", "pptx", "composer", "composing")):
+            index=7
         else:
             index=2
         remaining=sum(seconds for _, seconds in cls._PIPELINE_STAGES[index:])

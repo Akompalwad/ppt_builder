@@ -64,6 +64,48 @@ def table_markup(slide: SlideSpec) -> str:
     body_rows="".join("<tr>"+"".join(f"<td>{esc(value)}</td>" for value in row)+"</tr>" for row in rows)
     return f"<table class='data-table'><thead><tr>{head}</tr></thead><tbody>{body_rows}</tbody></table>"
 
+def diagram_markup(slide: SlideSpec) -> str:
+    """Render the same planned topology used by the editable PPTX exporter."""
+    plan=slide.visual_spec.get("diagram_spec")
+    if not isinstance(plan, dict):
+        return ""
+    kind=str(plan.get("kind") or slide.visual_spec.get("diagram_kind") or "")
+    if kind not in {"pipeline", "architecture_map", "reference_architecture"}:
+        return ""
+    items=slide.elements[:10]
+    if not items:
+        return ""
+    if kind == "reference_architecture":
+        controls=plan.get("cross_cutting_controls") or ["Security", "Governance", "Observability"]
+        layers="".join(
+            f"<section class='diagram-layer'><h3>{esc(item.heading or f'Layer {index + 1}')}</h3><p>{body(item)}</p></section>"
+            for index, item in enumerate(items[:4])
+        )
+        rail="".join(f"<span>{esc(control)}</span>" for control in controls[:3])
+        return f"<div class='reference-diagram'><div class='reference-layers'>{layers}</div><aside><b>CROSS-CUTTING<br>CONTROLS</b>{rail}</aside></div>"
+    count=len(items)
+    columns=3 if kind == "architecture_map" and count > 3 else min(5, count)
+    rows=(count + columns - 1) // columns
+    topology=str(plan.get("topology") or "linear")
+    lanes=plan.get("lanes") or (["Flow of execution"] if kind == "pipeline" else ["Architecture flow"])
+    nodes=[]
+    for index, item in enumerate(items):
+        row, column=divmod(index, columns)
+        if topology == "snake" and row % 2:
+            column=columns - 1 - column
+        next_row, next_column=(divmod(index + 1, columns) if index < count - 1 else (row, column))
+        if topology == "snake" and next_row % 2:
+            next_column=columns - 1 - next_column
+        direction=""
+        if index < count - 1:
+            direction="to-down" if next_row != row else ("to-right" if next_column > column else "to-left")
+        nodes.append(
+            f"<section class='diagram-node {direction}' style='grid-column:{column + 1};grid-row:{row + 1}'>"
+            f"<span>{index + 1:02d}</span><h3>{esc(item.heading or item.label or f'Component {index + 1}')}</h3><p>{body(item)}</p></section>"
+        )
+    lane_markup="".join(f"<div class='diagram-lane lane-{index + 1}'>{esc(lane).upper()}</div>" for index, lane in enumerate(lanes[:2]))
+    return f"<div class='planned-diagram diagram-{esc(kind)} rows-{rows}'>{lane_markup}<div class='diagram-grid' style='--diagram-columns:{columns}'>{''.join(nodes)}</div></div>"
+
 def background_css(slide: SlideSpec, d) -> str:
     """Mirror the portable PowerPoint gradient with restrained CSS layers."""
     treatment=str(slide.visual_spec.get("background_treatment") or "clean").lower()
@@ -105,6 +147,8 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header>{chart}"; kind=""
     elif image:
         content=f'''<header><span class="eyebrow">{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class="visual-layout"><div class="visual-copy"><strong>{esc(slide.purpose)}</strong><div class="visual-cards">{cards(slide)}</div></div><img class="content-image" src="{image}" /></div>'''; kind=""
+    elif diagram:=diagram_markup(slide):
+        content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header>{diagram}"; kind=""
     elif slide.visual_spec.get("contact_matrix"):
         contacts="".join(f"<section class='contact-cell'><span>{i+1:02d}</span><h3>{esc(item.heading or item.label or 'Escalation contact')}</h3><p>{body(item)}</p></section>" for i,item in enumerate(slide.elements[:6]))
         content=f"<header><span class='eyebrow'>{slide.slide_number:02d}</span><h2>{esc(slide.title)}</h2></header><div class='contact-matrix'>{contacts}</div>"; kind=""
@@ -168,6 +212,7 @@ def render_slide_html(spec: PresentationSpec, slide_number: int) -> str:
       .process-stages {{ display:grid; grid-template-columns:repeat({min(5,max(1,len(slide.elements[:10])))},1fr); gap:clamp(8px,1.5vw,24px); margin-top:8%; }} .process-stage {{ min-width:0; min-height:310px; position:relative; padding:24px 20px; text-align:center; border:1px solid {d.primary_color}; border-top:7px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); box-shadow:7px 9px 18px rgba(0,0,0,.2); }} .process-stage:not(:last-child):after {{ content:'›'; position:absolute; right:-18px; top:43%; z-index:2; color:{d.primary_color}; font-size:32px; font-weight:800; }} .process-stage span {{ display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:11px; font-weight:800; }} .process-stage h3 {{ margin:31px 0 20px; color:{d.text_primary}; font-size:clamp(13px,1.25vw,20px); }} .process-stage p {{ color:{d.text_secondary}; font-size:clamp(10px,.9vw,14px); line-height:1.35; }} .process-stages.dense-flow {{ grid-template-columns:repeat(5,1fr); margin-top:4%; }} .process-stages.dense-flow .process-stage {{ min-height:140px; padding:12px 10px; }} .process-stages.dense-flow .process-stage h3 {{ margin:14px 0 8px; font-size:clamp(10px,.95vw,15px); }} .process-stages.dense-flow .process-stage p {{ font-size:clamp(8px,.7vw,11px); }}
       .standard-flow {{ display:grid; grid-template-columns:repeat({min(5,max(1,len(slide.elements[:10])))},1fr); gap:clamp(8px,1.2vw,18px); margin-top:8%; }} .standard-flow-stage {{ min-height:310px; position:relative; padding:24px 20px; border:1px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); text-align:center; box-shadow:7px 9px 18px rgba(0,0,0,.2); }} .standard-flow-stage:not(:last-child):after {{ content:'›'; position:absolute; right:-17px; top:43%; z-index:2; color:{d.primary_color}; font-size:30px; font-weight:800; }} .standard-flow-stage span {{ display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:11px; font-weight:800; }} .standard-flow-stage h3 {{ margin:31px 0 20px; font-size:clamp(13px,1.25vw,20px); }} .standard-flow-stage p {{ color:{d.text_secondary}; font-size:clamp(10px,.9vw,14px); line-height:1.35; }} .standard-flow.dense-flow {{ grid-template-columns:repeat(5,1fr); margin-top:4%; }} .standard-flow.dense-flow .standard-flow-stage {{ min-height:140px; padding:12px 10px; }} .standard-flow.dense-flow .standard-flow-stage h3 {{ margin:14px 0 8px; font-size:clamp(10px,.95vw,15px); }} .standard-flow.dense-flow .standard-flow-stage p {{ font-size:clamp(8px,.7vw,11px); }}
       .architecture-layers {{ display:grid; gap:12px; margin:7% auto 0; width:86%; }} .architecture-layer {{ min-height:78px; padding:14px 24px; border:1px solid {d.primary_color}; border-radius:10px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); }} .architecture-layer:nth-child(2) {{ margin:0 3%; }} .architecture-layer:nth-child(3) {{ margin:0 6%; }} .architecture-layer:nth-child(4) {{ margin:0 9%; }} .architecture-layer h3 {{ color:{d.primary_color}; font-size:clamp(15px,1.55vw,22px); margin-bottom:7px; }} .architecture-layer p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); line-height:1.32; }}
+      .planned-diagram {{ position:relative; margin-top:5%; }} .diagram-lane {{ color:{d.primary_color}; font-size:clamp(9px,.8vw,12px); font-weight:800; letter-spacing:.035em; margin:0 0 10px; }} .diagram-lane.lane-2 {{ margin-top:16px; }} .diagram-grid {{ display:grid; grid-template-columns:repeat(var(--diagram-columns),1fr); grid-auto-rows:minmax(130px,1fr); gap:16px 22px; position:relative; }} .diagram-node {{ min-width:0; min-height:130px; position:relative; padding:14px 14px; text-align:center; border:1px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); box-shadow:7px 9px 18px rgba(0,0,0,.28); }} .diagram-node>span {{ display:grid; place-items:center; width:29px; height:29px; border-radius:50%; background:{d.primary_color}; color:{d.background_color}; font-size:10px; font-weight:800; }} .diagram-node h3 {{ color:{d.text_primary}; font-size:clamp(12px,1.18vw,18px); margin:15px 0 8px; line-height:1.12; }} .diagram-node p {{ color:{d.text_secondary}; font-size:clamp(9px,.78vw,12px); line-height:1.28; }} .diagram-node.to-right:after,.diagram-node.to-left:after {{ position:absolute; top:46%; z-index:3; color:{d.primary_color}; font-size:27px; font-weight:800; line-height:1; }} .diagram-node.to-right:after {{ content:'→'; right:-21px; }} .diagram-node.to-left:after {{ content:'←'; left:-21px; }} .diagram-node.to-down:after {{ content:'↓'; position:absolute; left:calc(50% - 10px); bottom:-31px; z-index:3; color:{d.primary_color}; font-size:30px; font-weight:800; }} .diagram-pipeline .diagram-grid {{ grid-auto-rows:minmax(125px,1fr); }} .reference-diagram {{ display:grid; grid-template-columns:minmax(0,1fr) 23%; gap:18px; margin-top:6%; }} .reference-layers {{ display:grid; gap:10px; }} .diagram-layer {{ min-height:78px; padding:13px 20px; border:1px solid {d.primary_color}; border-radius:11px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); }} .diagram-layer:nth-child(2) {{ margin:0 2%; }} .diagram-layer:nth-child(3) {{ margin:0 4%; }} .diagram-layer:nth-child(4) {{ margin:0 6%; }} .diagram-layer h3 {{ color:{d.primary_color}; font-size:clamp(13px,1.35vw,20px); margin-bottom:6px; }} .diagram-layer p {{ color:{d.text_secondary}; font-size:clamp(9px,.85vw,13px); line-height:1.27; }} .reference-diagram aside {{ display:flex; flex-direction:column; justify-content:center; gap:12px; padding:16px 11px; text-align:center; border:1px solid {d.primary_color}; border-radius:12px; background:{mix(d.surface_color,d.background_color,.45)}; }} .reference-diagram aside b {{ color:{d.primary_color}; font-size:clamp(9px,.8vw,12px); letter-spacing:.04em; }} .reference-diagram aside span {{ padding:9px 6px; border:1px solid {d.primary_color}; border-radius:8px; color:{d.text_primary}; font-size:clamp(9px,.82vw,12px); }}
       .nested-divisions {{ display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:8%; }} .nested-division {{ min-width:0; min-height:280px; padding:20px; border:1px solid {d.primary_color}; border-radius:12px; background:linear-gradient(145deg,{d.surface_color},{d.background_color}); box-shadow:8px 10px 22px rgba(0,0,0,.3); }} .nested-division span {{ color:{d.primary_color}; font-size:11px; font-weight:800; }} .nested-division h3 {{ color:{d.text_primary}; font-size:clamp(15px,1.55vw,22px); line-height:1.12; margin:21px 0 17px; }} .nested-division p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); line-height:1.34; margin:10px 0; }}
       .cycle {{ position:relative; width:58%; aspect-ratio:1.45; margin:5% auto 0; }} .cycle>strong,.cycle-node {{ position:absolute; display:grid; place-items:center; text-align:center; border:1px solid {d.primary_color}; border-radius:50%; }} .cycle>strong {{ inset:31% 32%; padding:10px; background:{d.surface_color}; font-size:clamp(12px,1.2vw,17px); }} .cycle-node {{ width:30%; aspect-ratio:1; padding:10px; background:{d.surface_color}; }} .cycle-node h3 {{ font-size:clamp(12px,1.2vw,17px); color:{d.text_primary}; }} .node-1 {{ left:35%; top:0; }} .node-2 {{ right:0; top:35%; }} .node-3 {{ left:0; top:35%; }} .node-4 {{ left:35%; bottom:0; }}
       .iso-stack {{ width:68%; margin:10% auto 0; }} .iso-layer {{ transform:skewX(-16deg); border:1px solid {d.primary_color}; background:{d.surface_color}; padding:15px 32px; margin-top:-2px; }} .iso-layer>* {{ transform:skewX(16deg); }} .iso-layer h3 {{ font-size:clamp(15px,1.5vw,22px); }} .iso-layer p {{ color:{d.text_secondary}; font-size:clamp(11px,1vw,15px); }}

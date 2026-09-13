@@ -9,8 +9,9 @@ from app.agents.slide_content_agent import SlideContentAgent
 from app.rendering.pptx_builder import build_presentation
 from app.rendering.web_renderer import render_slide_html
 from app.agents.qa_agent import PresentationQAAgent, summarize_point, topic_matches_deck
-from app.schemas.presentation import LayoutType, PresentationSpec, SlideSpec
+from app.schemas.presentation import LayoutType, PresentationSpec, SlideElement, SlideSpec
 from app.agents.design_agent import DesignDirectorAgent, validated_palette
+from app.agents.diagram_architect_agent import DiagramArchitectAgent
 from app.services.image_service import ImageService
 from app.services.generation_queue import GenerationQueue
 from app.config import Settings
@@ -64,12 +65,77 @@ def test_persisted_pipeline_eta_does_not_jump_when_content_starts():
         estimated_total_seconds=PresentationService._pipeline_total_budget(10),
     )
     timing=PresentationService._timing_estimate(job)
-    # Five minutes at creation becomes roughly four minutes after the early
+    # The visible pipeline budget becomes roughly four minutes after the early
     # agents; it must not jump upwards when Content starts.
-    assert 235 <= timing["estimated_remaining_seconds"] <= 240
+    assert 240 <= timing["estimated_remaining_seconds"] <= 245
+
+def test_dense_native_process_flow_keeps_editable_body_copy(tmp_path):
+    stages=[
+        SlideElement(heading=f"Stage {index}", body=f"Editable detail for stage {index} remains in the downloaded PowerPoint.")
+        for index in range(1, 10)
+    ]
+    spec=PresentationSpec(
+        title="Process test", topic="Process test",
+        slides=[SlideSpec(
+            slide_number=1, title="Detailed pipeline", purpose="Test dense workflow bodies",
+            layout_type=LayoutType.process_flow, elements=stages,
+            visual_spec={"native_diagram": True},
+        )],
+    )
+    output=build_presentation(spec, tmp_path/"dense-process.pptx")
+    rendered=Presentation(output)
+    text="\n".join(shape.text for shape in rendered.slides[0].shapes if hasattr(shape, "text") and shape.text)
+    assert "Editable detail for stage 1" in text
+    assert "Editable detail for stage 9" in text
+
+def test_diagram_architect_creates_a_snake_plan_for_dense_flow():
+    spec=PresentationSpec(
+        title="Architecture", topic="Architecture",
+        slides=[SlideSpec(
+            slide_number=1, title="Enterprise architecture", purpose="Show the path",
+            layout_type=LayoutType.process_flow,
+            elements=[SlideElement(heading=f"Node {number}", body="Editable detail") for number in range(1, 7)],
+            visual_spec={"diagram_kind":"architecture_map"},
+        )],
+    )
+    plans=DiagramArchitectAgent().apply(spec)
+    assert len(plans) == 1
+    assert plans[0].topology == "snake"
+    assert len(plans[0].nodes) == 6
+    assert [(edge.source, edge.target) for edge in plans[0].edges][-1] == ("s1-n5", "s1-n6")
+    assert spec.slides[0].visual_spec["diagram_spec"]["lanes"] == ["Request & orchestration", "Grounding & execution"]
+
+def test_diagram_architect_uses_security_specific_controls():
+    spec=PresentationSpec(
+        title="Security", topic="Security",
+        slides=[SlideSpec(
+            slide_number=1, title="Security architecture", purpose="Protect the platform",
+            layout_type=LayoutType.architecture_layers,
+            elements=[SlideElement(heading="Identity", body="Managed identity")],
+            visual_spec={"diagram_kind":"reference_architecture"},
+        )],
+    )
+    plan=DiagramArchitectAgent().apply(spec)[0]
+    assert plan.cross_cutting_controls == ["Identity & access", "Data protection", "Audit evidence"]
+
+def test_web_preview_consumes_the_diagram_architect_topology():
+    spec=PresentationSpec(
+        title="Pipeline", topic="Pipeline",
+        slides=[SlideSpec(
+            slide_number=1, title="RAG pipeline", purpose="Show the flow",
+            layout_type=LayoutType.process_flow,
+            elements=[SlideElement(heading=f"Stage {number}", body="Editable detail") for number in range(1, 7)],
+            visual_spec={"diagram_kind":"pipeline"},
+        )],
+    )
+    DiagramArchitectAgent().apply(spec)
+    preview=render_slide_html(spec, 1)
+    assert "planned-diagram" in preview
+    assert "to-down" in preview
+    assert "FLOW OF EXECUTION" in preview
 
 def test_pipeline_total_equals_the_sum_of_visible_agent_budgets():
-    assert PresentationService._pipeline_total_budget(10) == 300
+    assert PresentationService._pipeline_total_budget(10) == 305
 
 def test_fallback_and_pptx(tmp_path):
     spec=PresentationOrchestrator().generate(CreatePresentationRequest(topic="AI adoption",slide_count=4))

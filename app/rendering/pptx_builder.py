@@ -124,14 +124,14 @@ def fitted_text_size(text: str, preferred: int, width: float, height: float, *, 
             return size
     return minimum
 
-def add_text(slide, text, x, y, w, h, size, color, bold=False, *, align=PP_ALIGN.LEFT, font="Arial", valign=MSO_ANCHOR.TOP):
+def add_text(slide, text, x, y, w, h, size, color, bold=False, *, align=PP_ALIGN.LEFT, font="Arial", valign=MSO_ANCHOR.TOP, minimum: int=11):
     box=slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h)); frame=box.text_frame
     frame.clear(); frame.word_wrap=True; frame.margin_left=frame.margin_right=0; frame.margin_top=frame.margin_bottom=0; frame.vertical_anchor=valign
     p=frame.paragraphs[0]; p.text=(text or "").strip(); p.alignment=align
     # This is the single fit gate used by every renderer layout.  Individual
     # layouts allocate their own lanes, but no text can silently spill outside
     # its containing shape in a downloaded PPTX.
-    fitted=fitted_text_size(p.text,max(1,round(size*_FONT_SCALE.get())),w,h,bold=bold)
+    fitted=fitted_text_size(p.text,max(1,round(size*_FONT_SCALE.get())),w,h,bold=bold,minimum=minimum)
     p.font.size=Pt(fitted); p.font.bold=bold; p.font.name=font; p.font.color.rgb=rgb(color)
     return box
 
@@ -285,12 +285,21 @@ def workflow(slide, spec, d):
     gap_x=.18 if columns >= 5 else .28
     gap_y=.24
     width=(W-2*MARGIN-gap_x*(columns-1))/columns
-    available_h=3.82
+    # A dense two-row process still needs a body-copy lane.  The web preview
+    # always renders that copy, so reserve the same vertical space in the
+    # editable PPTX instead of exporting headings alone.
+    available_h=4.64 if rows > 1 else 3.82
     stage_h=(available_h-gap_y*(rows-1))/rows
-    stage_y=2.02 if rows > 1 else 2.18
+    stage_y=1.82 if rows > 1 else 2.18
+    topology=(spec.visual_spec.get("diagram_spec") or {}).get("topology", "linear")
     nodes=[]
     for index, item in enumerate(items):
         row,column=divmod(index, columns)
+        # A snake topology uses a right-to-left lower row.  The preceding
+        # stage then connects vertically to the next stage instead of drawing
+        # one diagonal line across the entire diagram.
+        if topology == "snake" and row % 2:
+            column=columns-1-column
         x=MARGIN+column*(width+gap_x)
         y=stage_y+row*(stage_h+gap_y)
         nodes.append((x,y,item,index,row,column))
@@ -315,18 +324,94 @@ def workflow(slide, spec, d):
         heading=item.heading or f"Step {index+1}"
         heading_size=13 if rows > 1 else (16 if count >= 5 else 20)
         body_size=10 if rows > 1 else (12 if count >= 5 else 15)
-        heading_y=y+(.68 if rows > 1 else .95)
-        heading_h=.52 if rows > 1 else .78
-        body_y=heading_y+heading_h+.16
+        heading_y=y+(.66 if rows > 1 else .95)
+        heading_h=.46 if rows > 1 else .78
+        body_y=heading_y+heading_h+(.12 if rows > 1 else .16)
         add_text(slide,heading,x+.14,heading_y,width-.28,heading_h,text_size(heading,heading_size,width-.28),d.text_primary,True,align=PP_ALIGN.CENTER,font=d.font_heading)
-        # Dense native diagrams communicate architecture through editable
-        # labelled nodes and connectors. A paragraph inside every node makes
-        # the diagram unreadable and creates text clipping in PowerPoint.
-        # Keep the supplied component labels visible; detailed explanation
-        # belongs on a companion layer or in speaker notes.
-        show_body=not (spec.visual_spec.get("native_diagram") and count > 4)
-        if show_body:
-            add_text(slide,element_text(item),x+.16,body_y,width-.32,max(.30,y+stage_h-body_y-.16),text_size(element_text(item),body_size,width-.32),d.text_secondary,align=PP_ALIGN.CENTER)
+        body=element_text(item)
+        if body:
+            # Dense diagrams use a smaller, bounded text lane, but preserve
+            # the same editable body content shown in the browser preview.
+            add_text(
+                slide, body, x+.16, body_y, width-.32,
+                max(.30, y+stage_h-body_y-.16),
+                text_size(body, body_size, width-.32), d.text_secondary,
+                align=PP_ALIGN.CENTER, minimum=8 if rows > 1 else 10,
+            )
+
+def pipeline_diagram(slide, spec, d):
+    """Editable execution pipeline with an explicit direction-of-flow cue."""
+    plan=spec.visual_spec.get("diagram_spec") or {}
+    lane=(plan.get("lanes") or ["FLOW OF EXECUTION"])[0].upper()
+    add_text(slide, lane, MARGIN, 1.52, 2.8, .16, 9, d.primary_color, True)
+    add_shape(slide, MSO_AUTO_SHAPE_TYPE.RECTANGLE, MARGIN+2.48, 1.59, 8.7, .025, d.primary_color, d.primary_color)
+    workflow(slide, spec, d)
+
+def architecture_map(slide, spec, d):
+    """Render system relationships as a directed, readable native map."""
+    items=spec.elements[:6] or [SlideElement(heading="System", body="")]
+    columns=3 if len(items) > 3 else len(items)
+    rows=(len(items)+columns-1)//columns
+    gap=.34; width=(W-2*MARGIN-gap*(columns-1))/columns
+    stage_h=1.42 if rows > 1 else 2.02
+    y0=2.28 if rows > 1 else 2.70
+    plan=spec.visual_spec.get("diagram_spec") or {}
+    topology=plan.get("topology", "linear")
+    lanes=plan.get("lanes") or ["REQUEST & ORCHESTRATION", "GROUNDING & EXECUTION"]
+    if rows > 1:
+        add_text(slide, lanes[0].upper(), MARGIN, 1.84, 3.3, .16, 9, d.primary_color, True)
+        add_text(slide, (lanes[1] if len(lanes)>1 else "EXECUTION").upper(), MARGIN, 4.22, 3.3, .16, 9, d.primary_color, True)
+    positions=[]
+    for index, item in enumerate(items):
+        row,column=divmod(index, columns)
+        if topology == "snake" and row % 2:
+            column=columns-1-column
+        x=MARGIN+column*(width+gap); y=y0+row*(stage_h+.72)
+        positions.append((x, y, width, stage_h, item, index))
+    for index, (x, y, w, h, _item, _number) in enumerate(positions[:-1]):
+        nx, ny, nw, nh, *_=positions[index+1]
+        if abs(ny-y) < .1:
+            if nx > x:
+                start=(x+w+.02, y+h/2); end=(nx-.02, ny+nh/2)
+                arrow=add_shape(slide, MSO_AUTO_SHAPE_TYPE.RIGHT_ARROW, x+w+.06, y+h/2-.11, gap-.12, .22, d.primary_color, d.primary_color)
+            else:
+                start=(x-.02, y+h/2); end=(nx+nw+.02, ny+nh/2)
+                arrow=add_shape(slide, MSO_AUTO_SHAPE_TYPE.LEFT_ARROW, nx+nw+.06, y+h/2-.11, gap-.12, .22, d.primary_color, d.primary_color)
+            arrow.line.transparency=100
+        else:
+            start=(x+w/2, y+h+.02); end=(nx+nw/2, ny-.02)
+            arrow=add_shape(slide, MSO_AUTO_SHAPE_TYPE.DOWN_ARROW, x+w/2-.11, y+h+.14, .22, .42, d.primary_color, d.primary_color)
+            arrow.line.transparency=100
+        # The native arrow is the editable relationship marker.  Do not add a
+        # second connector beneath it: PowerPoint renders that as a stray
+        # hairline extending beyond the arrow, especially after a row turn.
+    for x, y, w, h, item, index in positions:
+        add_surface(slide, x, y, w, h, d, emphasis=index == 0)
+        add_text(slide, f"{index+1:02d}", x+.16, y+.14, .34, .14, 8, d.primary_color, True)
+        heading=item.heading or f"Component {index+1}"
+        add_text(slide, heading, x+.18, y+.42, w-.36, .28, text_size(heading, 14, w-.36), d.text_primary, True, align=PP_ALIGN.CENTER, font=d.font_heading)
+        body=element_text(item)
+        if body:
+            add_text(slide, body, x+.18, y+.80, w-.36, h-.96, text_size(body, 10, w-.36), d.text_secondary, align=PP_ALIGN.CENTER, minimum=8)
+
+def reference_architecture(slide, spec, d):
+    """Layered platform view with editable cross-cutting controls on a side rail."""
+    items=spec.elements[:4] or [SlideElement(heading="Platform layer", body="")]
+    gap=.16; x=MARGIN; width=8.95; layer_h=(4.56-gap*(len(items)-1))/len(items)
+    for index, item in enumerate(items):
+        y=1.92+index*(layer_h+gap)
+        add_surface(slide, x+index*.10, y, width-index*.20, layer_h, d, emphasis=index == 0)
+        add_text(slide, item.heading or f"Layer {index+1}", x+.26+index*.10, y+.16, width-.52-index*.20, .24, 15, d.primary_color, True, font=d.font_heading)
+        add_text(slide, "\n".join(f"• {point}" for point in bullet_points(item, 4)), x+.28+index*.10, y+.48, width-.56-index*.20, layer_h-.62, 10, d.text_secondary)
+    rail_x=10.12; rail_w=2.40
+    add_shape(slide, MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE, rail_x, 1.92, rail_w, 4.56, mix(d.surface_color, d.background_color, .45), d.primary_color)
+    add_text(slide, "CROSS-CUTTING\nCONTROLS", rail_x+.18, 2.22, rail_w-.36, .40, 10, d.primary_color, True, align=PP_ALIGN.CENTER)
+    plan=spec.visual_spec.get("diagram_spec") or {}
+    controls=tuple(plan.get("cross_cutting_controls") or ("Security", "Governance", "Observability"))
+    for index, control in enumerate(controls):
+        y=3.05+index*.92
+        add_shape(slide, MSO_AUTO_SHAPE_TYPE.ROUNDED_RECTANGLE, rail_x+.22, y, rail_w-.44, .54, shade(d.surface_color, 14), d.primary_color)
+        add_text(slide, control, rail_x+.34, y+.19, rail_w-.68, .16, 10, d.text_primary, True, align=PP_ALIGN.CENTER)
 
 def chevron_flow(slide, spec, d):
     """A compact, connected process composition for an explicit workflow.
@@ -828,6 +913,9 @@ def build_presentation(spec: PresentationSpec, destination: str | Path) -> Path:
             elif variant=="chevron_flow": chevron_flow(slide,spec_slide,d)
             elif variant=="isometric_stack": isometric_stack(slide,spec_slide,d)
             elif spec_slide.visual_spec.get("horizontal_nested"): horizontal_nested(slide,spec_slide,d)
+            elif spec_slide.visual_spec.get("diagram_kind") == "architecture_map": architecture_map(slide,spec_slide,d)
+            elif spec_slide.visual_spec.get("diagram_kind") == "pipeline": pipeline_diagram(slide,spec_slide,d)
+            elif spec_slide.visual_spec.get("diagram_kind") == "reference_architecture": reference_architecture(slide,spec_slide,d)
             elif layout in {"step_workflow","process_flow","timeline"}: workflow(slide,spec_slide,d)
             elif layout=="architecture_layers": architecture(slide,spec_slide,d)
             elif layout=="two_column": two_columns(slide,spec_slide,d)
