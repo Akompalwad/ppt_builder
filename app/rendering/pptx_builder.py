@@ -232,7 +232,8 @@ def card(slide, element, x, y, w, h, d, index: int, emphasis=False):
         heading_height=.94 if len(heading)>20 else .52
         add_text(slide, heading, x+.24, y+.74, w-.48, heading_height, text_size(heading, 24, w-.48), d.text_primary, True, font=d.font_heading)
         body_y=y+.74+heading_height+.16
-        add_text(slide, body, x+.24, body_y, w-.48, h-(body_y-y)-.20, text_size(body, 16, w-.48), d.text_secondary, font=d.font_body)
+        body_height=max(.18, h-(body_y-y)-.20)
+        add_text(slide, body, x+.24, body_y, w-.48, body_height, text_size(body, 16, w-.48), d.text_secondary, font=d.font_body)
 
 def grid_cards(slide, spec, d):
     elements=spec.elements[:6]
@@ -252,7 +253,10 @@ def grid_cards(slide, spec, d):
     required=[]
     for item in elements:
         heading=item.heading or item.label or "Key insight"; body=element_text(item)
-        required.append(.74+estimated_text_height(heading,text_size(heading,24,card_w-.48),card_w-.48,bold=True)+.14+estimated_text_height(body,text_size(body,16,card_w-.48),card_w-.48))
+        # Keep the measurement in sync with ``card``: long headings reserve
+        # a two-line lane, rather than making the body start below the card.
+        heading_h=.94 if len(heading)>20 else .52
+        required.append(.74+heading_h+.16+estimated_text_height(body,text_size(body,16,card_w-.48),card_w-.48)+.20)
     # Cards grow for their actual copy up to the space reserved by this slide;
     # all cards in a grid share the tallest required height for clean alignment.
     card_h=min(max_available,max(1.15,max(required,default=1.15)))

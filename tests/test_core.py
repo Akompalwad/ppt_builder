@@ -935,3 +935,21 @@ def test_source_fidelity_is_explicit_and_does_not_change_normal_creative_prompts
     assert source_fidelity_requested("Create slides from the provided Word document. Use only the provided content and do not change the meaning.")
     assert source_fidelity_requested("Source fidelity: preserve facts and figures while condensing the text.")
     assert not source_fidelity_requested("Create a concise, creative presentation about product strategy.")
+
+def test_contact_first_portfolio_uses_form_slide_count_and_preserves_supplied_fields():
+    prompt='''Give me a 3 slide ppt for my portfolio.
+Name: Ajay Kompalwad
+Phone number: 8668460490
+Email: ajay@example.com
+Github link: https://github.com/Akompalwad
+Linked In profile: https://www.linkedin.com/in/ajay-kompalwad-ab3b29212/'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=5)
+    assert len(brief.slides) == 5
+    assert brief.slides[0].title == "Ajay Kompalwad"
+    assert [(item.heading, item.body) for item in brief.slides[1].elements] == [
+        ("GitHub", "https://github.com/Akompalwad"),
+        ("LinkedIn", "https://www.linkedin.com/in/ajay-kompalwad-ab3b29212/"),
+    ]
+    assert [(item.heading, item.body) for item in brief.slides[2].elements] == [
+        ("Phone", "8668460490"), ("Email", "ajay@example.com"),
+    ]

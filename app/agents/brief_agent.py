@@ -617,6 +617,13 @@ class BriefInterpreterAgent:
         # Markdown line breaks.
         numbers=[int(number) for number in re.findall(r"(?i)\bslide\s+(\d+)\s*:", normalized)]
         fields=re.findall(r"(?im)^\s*(?:title|subtitle|layout|topic areas|steps to cover|tiers to cover|key outcomes)\s*:", normalized)
+        portfolio_fields=re.findall(r"(?im)^\s*(?:name|phone(?:\s+number)?|email(?:\s+address)?|github(?:\s+link)?|linked\s*in(?:\s+profile)?)\s*:", normalized)
+        if re.search(r"(?i)\bportfolio\b", normalized) and len(portfolio_fields) >= 2:
+            return PromptClassification(
+                mode="structured",
+                reason="Detected a contact-first portfolio brief with explicit identity and profile fields.",
+                detected_slide_numbers=[],
+            )
         if '"slides"' in prompt and '"slide_number"' in prompt:
             return PromptClassification(
                 mode="structured",
@@ -996,6 +1003,80 @@ USER BRIEF:\n{bounded_prompt}''',
             ],
         )
 
+    @staticmethod
+    def _contact_first_portfolio_brief(normalized: str, requested_count: int) -> PresentationBrief | None:
+        """Create a truthful portfolio shell when only identity/contact data exists.
+
+        Do not fabricate a job title, skills, achievements, or projects from a
+        name and a pair of links.  The resulting editable slides use every
+        supplied contact value and make missing portfolio evidence explicit in
+        an editable, audience-friendly way.
+        """
+        if not re.search(r"(?i)\bportfolio\b", normalized):
+            return None
+
+        def field(label: str) -> str:
+            match=re.search(rf"(?im)^\s*{label}\s*:\s*(.+?)\s*$", normalized)
+            return match.group(1).strip() if match else ""
+
+        name=field("Name")
+        phone=field("Phone(?: number)?")
+        email=field("Email(?: address)?")
+        github=field("Git(?:Hub| hub)(?: link| profile)?")
+        linkedin=field("Linked[ -]?In(?: profile| link)?")
+        if not name or not any((phone, email, github, linkedin)):
+            return None
+
+        count=max(3, min(5, requested_count))
+        contact_items=[]
+        if phone: contact_items.append(SlideElement(type="contact", heading="Phone", body=phone))
+        if email: contact_items.append(SlideElement(type="contact", heading="Email", body=email))
+        profile_items=[]
+        if github: profile_items.append(SlideElement(type="link", heading="GitHub", body=github))
+        if linkedin: profile_items.append(SlideElement(type="link", heading="LinkedIn", body=linkedin))
+        slides=[
+            BriefSlide(
+                slide_number=1, title=name, subtitle="Professional Portfolio", purpose="Professional Portfolio",
+                layout_type=LayoutType.title_slide, elements=[], exact_element_count=0,
+                portfolio_contract=True,
+                content_instruction="Use the supplied name only. Do not infer a role, seniority, biography, or achievement.",
+            ),
+            BriefSlide(
+                slide_number=2, title="Professional Profiles", purpose="Professional links and public work.",
+                layout_type=LayoutType.two_column, elements=profile_items or [
+                    SlideElement(type="text", heading="Professional profile", body="Add a public profile link."),
+                    SlideElement(type="text", heading="Work samples", body="Add a portfolio or project link."),
+                ], exact_element_count=2, portfolio_contract=True,
+                content_instruction="Render supplied profile links exactly as editable text. Do not invent social profiles.",
+            ),
+            BriefSlide(
+                slide_number=3, title="Contact", purpose="Contact details for follow-up.",
+                layout_type=LayoutType.feature_grid, elements=contact_items or [
+                    SlideElement(type="text", heading="Contact details", body="Add a preferred contact method."),
+                ], exact_element_count=max(1, len(contact_items)), portfolio_contract=True,
+                content_instruction="Render supplied contact details exactly as editable text. Do not add addresses or alternate contacts.",
+            ),
+        ]
+        if count >= 4:
+            slides.append(BriefSlide(
+                slide_number=4, title="Selected Work", purpose="Add one or two projects to make the portfolio specific.",
+                layout_type=LayoutType.feature_grid, elements=[
+                    SlideElement(type="card", heading="Featured project", body="Add the problem, your contribution, and the outcome."),
+                    SlideElement(type="card", heading="Technical contribution", body="Add the technologies, systems, or methods you used."),
+                ], exact_element_count=2, portfolio_contract=True,
+                content_instruction="These are editable prompts for missing project evidence, not claims about the person. Do not invent project facts.",
+            ))
+        if count >= 5:
+            slides.append(BriefSlide(
+                slide_number=5, title="Let’s Connect", purpose="Use the supplied contact details or professional profiles to continue the conversation.",
+                layout_type=LayoutType.summary, elements=[
+                    SlideElement(type="link", heading="GitHub", body=github or "Add a GitHub link."),
+                    SlideElement(type="link", heading="LinkedIn", body=linkedin or "Add a LinkedIn profile link."),
+                ], exact_element_count=2, portfolio_contract=True,
+                content_instruction="Use supplied links exactly. Do not invent a call-to-action, role, or achievement.",
+            ))
+        return PresentationBrief(deck_title=f"Professional Portfolio — {name}", requested_slide_count=count, slides=slides)
+
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
         if self.classify(prompt).mode != "structured":
             return PresentationBrief()
@@ -1027,6 +1108,8 @@ USER BRIEF:\n{bounded_prompt}''',
                 return PresentationBrief(slides=slides, deck_title=payload.get("title"))
         normalized=self._normalize_markdown(prompt)
         if portfolio:=self._portfolio_brief(normalized):
+            return portfolio
+        if portfolio:=self._contact_first_portfolio_brief(normalized, requested_count):
             return portfolio
         deck_title_match=re.search(r"\b(?:presentation|deck)\s+titled\s+[\"“]([^\"”]+)[\"”]", normalized, re.I)
         declared_deck_title=(deck_title_match.group(1).strip() if deck_title_match
