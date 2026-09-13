@@ -397,6 +397,9 @@ def admin_activity():
                         st.rerun()
                     except httpx.HTTPError:
                         st.error("This feedback could not be deleted.")
+    if st.button("Close admin activity", key="admin_activity_close", use_container_width=True):
+        st.session_state.show_admin_activity=False
+        st.rerun()
 
 if auth_error:=st.query_params.get("auth_error"):
     st.error(str(auth_error))
@@ -667,9 +670,18 @@ def presentation_library(history: list[dict]):
         st.info("Completed decks will appear here.")
         return
     st.caption("Your completed decks. Generated files expire automatically, but each deck remains listed here.")
+    page_size=st.selectbox("Decks per page", [5, 10, 20], index=0, key="presentation_library_page_size")
+    if st.session_state.get("presentation_library_saved_page_size") != page_size:
+        st.session_state.presentation_library_saved_page_size=page_size
+        st.session_state.presentation_library_page=1
+    total_pages=max(1, (len(completed)+page_size-1)//page_size)
+    current_page=min(max(1, int(st.session_state.get("presentation_library_page", 1))), total_pages)
+    st.session_state.presentation_library_page=current_page
+    start=(current_page-1)*page_size
+    page_items=completed[start:start+page_size]
     groups={"Today":[], "Yesterday":[], "Earlier":[]}
     today=datetime.now(timezone.utc).date()
-    for item in completed:
+    for item in page_items:
         try:
             updated=datetime.fromisoformat(item["updated_at"].replace("Z", "+00:00"))
             updated_date=(updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)).date()
@@ -708,7 +720,19 @@ def presentation_library(history: list[dict]):
                     except (httpx.HTTPError, ValueError):
                         st.warning("The deck opened, but its original prompt could not be restored.")
                     st.session_state.job={"presentation_id":item["id"]}
+                    st.session_state.show_presentation_library=False
                     st.rerun()
+    previous, indicator, following=st.columns([1, 2, 1])
+    if previous.button("← Previous", key="presentation_library_previous", disabled=current_page <= 1, use_container_width=True):
+        st.session_state.presentation_library_page=current_page-1
+        st.rerun()
+    indicator.caption(f"Page {current_page} of {total_pages} · {len(completed)} completed deck(s)")
+    if following.button("Next →", key="presentation_library_next", disabled=current_page >= total_pages, use_container_width=True):
+        st.session_state.presentation_library_page=current_page+1
+        st.rerun()
+    if st.button("Close", key="presentation_library_close", use_container_width=True):
+        st.session_state.show_presentation_library=False
+        st.rerun()
 try:
     access=httpx.post(f"{API}/api/access/claim",headers=ACCESS_HEADERS,timeout=5)
     if access.status_code == 429:
@@ -772,15 +796,23 @@ with st.sidebar:
     with st.container(key="sidebar-action-rail", gap=6):
         if history is not None:
             if st.button(f"📚  My presentations ({len(completed)})", use_container_width=True):
-                presentation_library(history)
+                st.session_state.show_presentation_library=True
         else:
             st.button("📚  My presentations", use_container_width=True, disabled=True)
         if st.button("✦  Share feedback", use_container_width=True):
             share_feedback()
         if auth_info.get("is_admin") and st.button("◈  Admin activity", use_container_width=True):
-            admin_activity()
+            st.session_state.show_admin_activity=True
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
             about_slideweaver()
+
+# Dialog contents are re-invoked after a Streamlit rerun while their state is
+# set. Pagination buttons therefore advance inside the active dialog instead
+# of closing it as the surrounding page redraws.
+if st.session_state.get("show_presentation_library") and history is not None:
+    presentation_library(history)
+if st.session_state.get("show_admin_activity") and auth_info.get("is_admin"):
+    admin_activity()
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy", key="topic_input")
 missing_generation_inputs=[]
 if not topic.strip():
