@@ -161,6 +161,37 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
+## PII protection for external providers
+
+SlideWeaver can prevent contact details in a prompt or slide edit from being
+sent to Gemini, NVIDIA, Unsplash, or an image-generation provider. It replaces
+supported values with placeholders such as `{{PII_EMAIL_1}}` and
+`{{PII_PHONE_1}}` before the generation pipeline begins. The canonical prompt
+and saved slide specification remain tokenized.
+
+The requesting user still receives their original values: SlideWeaver keeps an
+encrypted, owner-scoped token map on the server and restores it only for that
+owner's preview and final editable PPTX export. The token map is deleted with
+the generated files when the deck expires. It is never included in provider
+requests, generated image prompts, or the canonical deck JSON.
+
+Set these server-only values:
+
+```bash
+PII_PROTECTION_ENABLED=true
+# Generate once and store securely; do not commit this value.
+PII_VAULT_KEY="$(python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+```
+
+Install the updated dependencies before enabling this in production:
+
+```bash
+pip install -r requirements.txt
+```
+
+Emails and phone numbers are tokenized. Credentials, API keys, passwords,
+private keys, and access tokens are rejected rather than restored or exported.
+
 ## Retention and cleanup
 
 `FILE_RETENTION_HOURS` controls how long generated PPTX files and downloaded

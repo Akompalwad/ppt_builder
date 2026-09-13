@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import shutil
 from app.config import get_settings
-from app.models.database import Presentation, SessionLocal
+from app.models.database import Presentation, PresentationPIIVault, SessionLocal
 
 MANIFEST = "lifecycle.json"
 
@@ -40,5 +40,9 @@ def cleanup_expired_files(now: datetime | None = None) -> list[str]:
         with SessionLocal() as db:
             presentation=db.get(Presentation,presentation_id)
             if presentation: presentation.status="EXPIRED"; db.commit()
+            vault=db.get(PresentationPIIVault, presentation_id)
+            if vault:
+                db.delete(vault)
+                db.commit()
         removed.append(presentation_id)
     return removed

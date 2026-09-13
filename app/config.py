@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     storage_provider: str = "local"
     local_storage_path: Path = Path("storage/files")
     feedback_storage_path: Path = Path("storage/feedback")
+    # When enabled, external model and image providers receive placeholders
+    # rather than identifiable values. A Fernet key is required only when a
+    # prompt actually contains supported PII that must be restored for its owner.
+    pii_protection_enabled: bool = True
+    pii_vault_key: str = ""
     llm_provider: str = "gemini"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nvidia_api_key: str = ""

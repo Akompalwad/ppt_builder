@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import re
 from sqlalchemy import select
-from app.models.database import GenerationJob, OAuthSession, Presentation, PresentationVersion, SessionLocal, User
+from app.models.database import GenerationJob, OAuthSession, Presentation, PresentationPIIVault, PresentationVersion, SessionLocal, User
 from app.schemas.presentation import CreatePresentationRequest, PresentationSpec
 from app.agents.orchestrator import PresentationOrchestrator
 from app.agents.qa_agent import PresentationQAAgent
@@ -11,6 +11,7 @@ from app.rendering.pptx_builder import build_presentation
 from app.config import get_settings
 from app.services.image_service import ImageService
 from app.services.lifecycle_service import schedule_expiry
+from app.services.pii_protection_service import PIIProtectionService
 from app.services.generation_queue import shared_generation_queue
 
 DEV_EMAIL="local@example.test"
@@ -129,7 +130,13 @@ class PresentationService:
         return user
     def create(self, request: CreatePresentationRequest, session_id: str) -> tuple[str,str]:
         with SessionLocal() as db:
-            user=self._user(db,session_id); p=Presentation(user_id=user.id,title=request.topic[:500],topic=request.topic); db.add(p); db.flush(); job=GenerationJob(presentation_id=p.id,estimated_total_seconds=self._pipeline_total_budget(request.slide_count)); db.add(job); db.commit(); return p.id,job.id
+            user=self._user(db,session_id)
+            protected_topic, tokens=PIIProtectionService.tokenize(request.topic)
+            p=Presentation(user_id=user.id,title=(protected_topic or "")[:500],topic=protected_topic or "")
+            db.add(p); db.flush()
+            PIIProtectionService.save_tokens(db, p.id, user.id, tokens)
+            job=GenerationJob(presentation_id=p.id,estimated_total_seconds=self._pipeline_total_budget(request.slide_count))
+            db.add(job); db.commit(); return p.id,job.id
     def list_for_current_user(self, session_id: str) -> list[dict]:
         """History for the active profile; Google auth will supply real users later."""
         with SessionLocal() as db:
@@ -144,9 +151,10 @@ class PresentationService:
                 metadata=spec_json.get("metadata", {})
                 slides=spec_json.get("slides", [])
                 design=spec_json.get("design_system", {})
+                tokens=PIIProtectionService.tokens_for(db, presentation.id, user.id)
                 history.append({
                     "id":presentation.id,
-                    "title":presentation.title,
+                    "title":PIIProtectionService.restore_text(presentation.title, tokens),
                     "status":presentation.status,
                     "created_at":presentation.created_at.isoformat(),
                     "updated_at":presentation.updated_at.isoformat(),
@@ -182,7 +190,10 @@ class PresentationService:
                 job=db.get(GenerationJob,job_id); presentation=db.get(Presentation,presentation_id)
                 def progress(stage,value): job.current_stage=stage; job.progress=value; job.status="RUNNING"; job.stage_started_at=datetime.utcnow(); db.commit()
                 try:
-                    spec=PresentationOrchestrator().generate(request,progress)
+                    # The only prompt that reaches external providers is the
+                    # tokenized copy persisted against this presentation.
+                    safe_request=request.model_copy(update={"topic":presentation.topic})
+                    spec=PresentationOrchestrator().generate(safe_request,progress)
                     progress("Visual Asset Service — retrieving topic-specific imagery", 94)
                     asset_results=ImageService().attach_assets(spec,get_settings().local_storage_path / presentation_id / "assets",request.include_external_images)
                     # Image attachment changes the selected PPTX composition.
@@ -194,9 +205,16 @@ class PresentationService:
                     spec.metadata["file_expires_at"]=schedule_expiry(presentation_id)
                     version=PresentationVersion(presentation_id=presentation_id,version_number=1,spec_json=spec.model_dump(mode="json"),generated_by="pipeline"); db.add(version); db.flush()
                     progress("PPTX Renderer — building the editable presentation", 98)
-                    file=get_settings().local_storage_path / presentation_id / "versions" / "1" / "presentation.pptx"; build_presentation(spec,file)
+                    owner_tokens=PIIProtectionService.tokens_for(db, presentation_id, presentation.user_id)
+                    file=get_settings().local_storage_path / presentation_id / "versions" / "1" / "presentation.pptx"
+                    build_presentation(PIIProtectionService.restore_spec(spec, owner_tokens),file)
                     presentation.title=spec.title; presentation.status="COMPLETED"; presentation.current_version_id=version.id; job.status="COMPLETED"; job.progress=100; job.current_stage="COMPLETED"; db.commit()
                 except Exception as exc:
+                    # A failed deck has no owner-facing export to restore, so
+                    # remove its temporary protected-value map immediately.
+                    vault=db.get(PresentationPIIVault, presentation_id)
+                    if vault:
+                        db.delete(vault)
                     presentation.status="FAILED"; job.status="FAILED"; job.error_message="Generation could not be completed."; db.commit(); raise exc
     def get(self,presentation_id:str,session_id: str):
         with SessionLocal() as db:
@@ -204,7 +222,10 @@ class PresentationService:
             user=self._user(db,session_id)
             if not p or p.user_id != user.id: return None
             v=db.get(PresentationVersion,p.current_version_id) if p.current_version_id else None
-            return {"id":p.id,"title":p.title,"topic":p.topic,"status":p.status,"current_version_id":p.current_version_id,"spec":v.spec_json if v else None}
+            tokens=PIIProtectionService.tokens_for(db, p.id, user.id)
+            spec=PresentationSpec.model_validate(v.spec_json) if v else None
+            restored=PIIProtectionService.restore_spec(spec, tokens).model_dump(mode="json") if spec else None
+            return {"id":p.id,"title":PIIProtectionService.restore_text(p.title,tokens),"topic":PIIProtectionService.restore_text(p.topic,tokens),"status":p.status,"current_version_id":p.current_version_id,"spec":restored}
     def job(self,job_id:str,session_id: str):
         with SessionLocal() as db:
             j=db.get(GenerationJob,job_id); user=self._user(db,session_id); presentation=db.get(Presentation,j.presentation_id) if j else None
@@ -235,12 +256,14 @@ class PresentationService:
             else:
                 result["timing"]=self._timing_estimate(j)
             return result
-    def create_slide_edit(self,presentation_id:str,slide_number:int,instruction:str,session_id:str) -> str:
+    def create_slide_edit(self,presentation_id:str,slide_number:int,instruction:str,session_id:str) -> tuple[str,str]:
         """Queue an isolated edit without making the existing deck unavailable."""
         with SessionLocal() as db:
             presentation=db.get(Presentation,presentation_id); user=self._user(db,session_id)
             if not presentation or presentation.user_id != user.id or not presentation.current_version_id:
                 raise LookupError("Presentation not found")
+            protected_instruction, tokens=PIIProtectionService.tokenize(instruction)
+            PIIProtectionService.save_tokens(db, presentation_id, user.id, tokens)
             current=db.get(PresentationVersion,presentation.current_version_id)
             if not current or not 1 <= slide_number <= len(PresentationSpec.model_validate(current.spec_json).slides):
                 raise IndexError("Slide not found")
@@ -250,7 +273,7 @@ class PresentationService:
                 current_stage=f"Slide {slide_number} edit queued",
             )
             db.add(job); db.commit()
-            return job.id
+            return job.id, protected_instruction or ""
 
     def generate_slide_edit(self,presentation_id:str,job_id:str,slide_number:int,instruction:str):
         """Run one slide through content, QA, and PPTX stages as a tracked job."""
@@ -284,7 +307,8 @@ class PresentationService:
                     db.add(version); db.flush(); presentation.current_version_id=version.id
                     progress("PPTX Renderer — rebuilding editable presentation",90)
                     file=get_settings().local_storage_path/presentation_id/"versions"/str(number)/"presentation.pptx"
-                    build_presentation(updated,file)
+                    owner_tokens=PIIProtectionService.tokens_for(db, presentation_id, presentation.user_id)
+                    build_presentation(PIIProtectionService.restore_spec(updated, owner_tokens),file)
                     job.status="COMPLETED"; job.progress=100; job.current_stage=f"Slide {slide_number} updated"; db.commit()
                 except Exception:
                     job.status="FAILED"; job.error_message="The slide adjustment could not be applied."; db.commit()
@@ -294,7 +318,9 @@ class PresentationService:
         with SessionLocal() as db:
             p=db.get(Presentation,presentation_id); user=self._user(db,session_id)
             if not p or p.user_id != user.id: raise LookupError("Presentation not found")
-            current=db.get(PresentationVersion,p.current_version_id); spec=PresentationSpec.model_validate(current.spec_json); updated=PresentationOrchestrator().edit_slide(spec,slide_number,instruction)
+            protected_instruction, tokens=PIIProtectionService.tokenize(instruction)
+            PIIProtectionService.save_tokens(db, presentation_id, user.id, tokens)
+            current=db.get(PresentationVersion,p.current_version_id); spec=PresentationSpec.model_validate(current.spec_json); updated=PresentationOrchestrator().edit_slide(spec,slide_number,protected_instruction or "")
             if updated.slides[slide_number-1].visual_spec.get("edit_image_requested"):
                 asset_result=ImageService().attach_slide_asset(
                     updated, slide_number, get_settings().local_storage_path / presentation_id / "assets"
@@ -307,4 +333,4 @@ class PresentationService:
             PresentationQAAgent().validate_and_recompose(updated)
             number=db.scalar(select(PresentationVersion.version_number).where(PresentationVersion.presentation_id==presentation_id).order_by(PresentationVersion.version_number.desc()))+1
             updated.metadata["file_expires_at"]=schedule_expiry(presentation_id)
-            version=PresentationVersion(presentation_id=presentation_id,version_number=number,spec_json=updated.model_dump(mode="json"),generated_by="slide_edit"); db.add(version); db.flush(); p.current_version_id=version.id; p.status="COMPLETED"; file=get_settings().local_storage_path/presentation_id/"versions"/str(number)/"presentation.pptx"; build_presentation(updated,file); db.commit(); return updated,number
+            version=PresentationVersion(presentation_id=presentation_id,version_number=number,spec_json=updated.model_dump(mode="json"),generated_by="slide_edit"); db.add(version); db.flush(); p.current_version_id=version.id; p.status="COMPLETED"; file=get_settings().local_storage_path/presentation_id/"versions"/str(number)/"presentation.pptx"; build_presentation(PIIProtectionService.restore_spec(updated, PIIProtectionService.tokens_for(db, presentation_id, user.id)),file); db.commit(); return PIIProtectionService.restore_spec(updated, PIIProtectionService.tokens_for(db, presentation_id, user.id)),number

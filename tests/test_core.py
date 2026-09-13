@@ -1,5 +1,6 @@
 import zipfile
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from app.schemas.presentation import CreatePresentationRequest
 from app.agents.orchestrator import PresentationOrchestrator, auto_theme_for_topic, resolve_theme
@@ -17,6 +18,7 @@ from app.services.generation_queue import GenerationQueue
 from app.config import Settings
 from app.models.database import GenerationJob
 from app.services.presentation_service import PresentationService
+from app.services.pii_protection_service import PIIProtectionError, PIIProtectionService
 from pptx import Presentation
 
 def test_generation_queue_snapshot_reports_waiting_depth():
@@ -133,6 +135,17 @@ def test_web_preview_consumes_the_diagram_architect_topology():
     assert "planned-diagram" in preview
     assert "to-down" in preview
     assert "FLOW OF EXECUTION" in preview
+
+def test_pii_protection_tokenizes_contact_details_before_provider_use():
+    protected, tokens=PIIProtectionService.tokenize("Contact Priya at priya@example.com or +91 98765 43210.")
+    assert protected == "Contact Priya at {{PII_EMAIL_1}} or {{PII_PHONE_1}}."
+    assert tokens["{{PII_EMAIL_1}}"] == "priya@example.com"
+    assert tokens["{{PII_PHONE_1}}"] == "+91 98765 43210"
+    assert PIIProtectionService.restore_text(protected, tokens).endswith("+91 98765 43210.")
+
+def test_pii_protection_blocks_credentials():
+    with pytest.raises(PIIProtectionError):
+        PIIProtectionService.tokenize("API key: sk-not-a-real-key")
 
 def test_pipeline_total_equals_the_sum_of_visible_agent_budgets():
     assert PresentationService._pipeline_total_budget(10) == 305
