@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.schemas.presentation import LayoutType, SlideElement, SlideSpec
+from app.services.source_fidelity_service import source_fidelity_requested
 
 
 _LAYOUTS={
@@ -48,6 +49,8 @@ class BriefSlide(BaseModel):
     native_diagram: bool = False
     diagram_kind: str | None = None
     portfolio_contract: bool = False
+    source_fidelity_contract: bool = False
+    source_material: str | None = None
 
     def seed(self) -> SlideSpec:
         elements=[element.model_copy(deep=True) for element in self.elements]
@@ -77,6 +80,8 @@ class BriefSlide(BaseModel):
                 **({"native_diagram":True, "image_required":False} if self.native_diagram else {}),
                 **({"diagram_kind":self.diagram_kind} if self.diagram_kind else {}),
                 **({"portfolio_contract":True} if self.portfolio_contract else {}),
+                **({"source_fidelity_contract":True} if self.source_fidelity_contract else {}),
+                **({"source_material":self.source_material} if self.source_material else {}),
             },
             metadata={"brief_layout_locked": True, "requested_element_count":self.exact_element_count},
         )
@@ -903,6 +908,66 @@ USER BRIEF:\n{bounded_prompt}''',
             result["content_instruction"]="Create an On-Call Matrix with distinct escalation fields. Preserve each generated contact value in its own aligned cell; never use duplicate generic headings."
         return result
 
+    @staticmethod
+    def _source_fidelity_elements(title: str, section: str) -> list[SlideElement]:
+        """Turn authored slide prose into bounded, renderer-safe source copy.
+
+        This path is used only when the requester explicitly asks for source
+        fidelity.  It deliberately does no fact expansion: it retains the
+        words supplied for that slide and merely groups complete clauses into
+        editable text elements that can fit a slide.
+        """
+        source=re.split(
+            r"(?i)\n\s*(?=(?:use\s+native|do\s+not|keep\s+|maintain\s+|ensure\s+|theme\s*:|style\s*:))",
+            section,
+            maxsplit=1,
+        )[0]
+        lines=[]
+        for line_number, raw in enumerate(source.splitlines()):
+            line=raw.strip(" -•\t")
+            # ``section`` begins immediately after ``Slide N:``, therefore
+            # its first line is the title already rendered above the content.
+            if line_number == 0 and line.rstrip(". ").casefold() == title.rstrip(". ").casefold():
+                continue
+            if not line or re.match(r"(?i)^(?:layout|title|subtitle)\s*:", line):
+                continue
+            # Keep the content after a semantic label, but discard directive
+            # prefixes that would otherwise become visible slide copy.
+            line=re.sub(r"(?i)^(?:topic areas|steps to cover|tiers to cover|key outcomes)\s*:\s*", "", line)
+            if line:
+                lines.append(line)
+        if not lines:
+            return []
+        source=" ".join(lines)
+        # Preserve a real process as its supplied stages rather than asking a
+        # model to infer new node labels from the surrounding paragraph.
+        if "→" in source:
+            stages=[item.strip(" .") for item in source.split("→") if item.strip(" .")]
+            if 2 <= len(stages) <= 10:
+                return [SlideElement(type="step", heading=stage, body="") for stage in stages]
+        clauses=[part.strip() for part in re.split(r"(?<=[.!?])\s+|\s*[;•]\s*", source) if part.strip()]
+        groups=[]
+        current=""
+        for clause in clauses:
+            candidate=f"{current} {clause}".strip()
+            if current and len(candidate) > 185:
+                groups.append(current)
+                current=clause
+            else:
+                current=candidate
+        if current:
+            groups.append(current)
+        # A slide cannot faithfully show an unlimited pasted document. Keep
+        # the first four complete source clauses; the content agent receives
+        # the complete source material and may condense it without adding data.
+        elements=[]
+        for index, group in enumerate(groups[:4], start=1):
+            match=re.match(r"(.{2,52}?)\s+[—:-]\s+(.+)", group)
+            heading=match.group(1).strip() if match else (title if index == 1 else f"Detail {index}")
+            body=match.group(2).strip() if match else group
+            elements.append(SlideElement(type="card", heading=heading, body=body))
+        return elements
+
     def interpret_slide_adjustment(self, instruction: str) -> dict | None:
         """Extract an explicit one-slide layout edit without requiring Slide N.
 
@@ -1014,6 +1079,11 @@ USER BRIEF:\n{bounded_prompt}''',
         """
         if not re.search(r"(?i)\bportfolio\b", normalized):
             return None
+        # A fully authored slide agenda must continue through the normal
+        # contract parser. This safe fallback is only for a bare list of
+        # identity/contact fields.
+        if re.search(r"(?i)\bslide\s+\d+\s*:", normalized):
+            return None
 
         def field(label: str) -> str:
             match=re.search(rf"(?im)^\s*{label}\s*:\s*(.+?)\s*$", normalized)
@@ -1077,6 +1147,153 @@ USER BRIEF:\n{bounded_prompt}''',
             ))
         return PresentationBrief(deck_title=f"Professional Portfolio — {name}", requested_slide_count=count, slides=slides)
 
+    @staticmethod
+    def _source_fidelity_five_slide_portfolio_brief(normalized: str) -> PresentationBrief | None:
+        """Parse the authored five-slide portfolio recipe as an immutable contract.
+
+        A normal numbered-brief parser is intentionally permissive.  That is
+        the wrong trade-off for a portfolio that says to use *only* supplied
+        content: labels such as ``Layout:`` were being folded into titles and
+        the model was then free to replace the author's project facts with
+        generic biography claims.  Keep this narrow on purpose so other
+        presentation requests retain their normal creative behavior.
+        """
+        if not (
+            source_fidelity_requested(normalized)
+            and re.search(r"(?i)\b(?:personal|professional)\s+portfolio\b", normalized)
+        ):
+            return None
+
+        markers=list(re.finditer(r"(?im)^\s*slide\s+(\d+)\s*:\s*([^\n]+)", normalized))
+        sections={
+            int(marker.group(1)): normalized[marker.end():markers[index + 1].start() if index + 1 < len(markers) else len(normalized)]
+            for index, marker in enumerate(markers)
+        }
+        if not all(number in sections for number in range(1, 6)):
+            return None
+
+        def line(section: str, label: str) -> str:
+            match=re.search(rf"(?im)^\s*{re.escape(label)}\s*:\s*(.+?)\s*$", section)
+            return " ".join(match.group(1).split()).strip() if match else ""
+
+        def block(section: str, label: str, following: tuple[str, ...]) -> str:
+            stops="|".join(re.escape(item) for item in following)
+            match=re.search(
+                rf"(?ims)^\s*{re.escape(label)}\s*:\s*(.+?)(?=^\s*(?:{stops})\s*:|\Z)",
+                section,
+            )
+            return " ".join(match.group(1).split()).strip() if match else ""
+
+        def labelled_parts(section: str, label: str, following: tuple[str, ...]) -> tuple[str, str]:
+            """Return a labelled block's first line and remaining copy."""
+            stops="|".join(re.escape(item) for item in following)
+            match=re.search(
+                rf"(?ims)^\s*{re.escape(label)}\s*:\s*(.+?)(?=^\s*(?:{stops})\s*:|\Z)",
+                section,
+            )
+            if not match:
+                return "", ""
+            lines=[" ".join(item.split()) for item in match.group(1).splitlines() if item.strip()]
+            return (lines[0], " ".join(lines[1:])) if lines else ("", "")
+
+        cover=sections[1]
+        title=line(cover, "Title")
+        subtitle=line(cover, "Subtitle")
+        tags_match=re.search(r"(?ims)^\s*Include\s+(?:three|3)\s+capability\s+tags\s*:\s*(.+?)\Z", cover)
+        tags=(
+            [item.strip(" -•\t.") for item in tags_match.group(1).splitlines() if item.strip(" -•\t.")]
+            if tags_match else []
+        )
+
+        featured=sections[2]
+        featured_title=markers[[int(marker.group(1)) for marker in markers].index(2)].group(2).strip()
+        problem=block(featured, "Problem", ("Solution", "Outcome", "Include the repository link"))
+        solution=block(featured, "Solution", ("Outcome", "Include the repository link"))
+        outcome=block(featured, "Outcome", ("Include the repository link",))
+        featured_repo_match=re.search(r"(?im)^\s*https?://\S+", featured)
+        featured_repo=featured_repo_match.group(0).strip() if featured_repo_match else ""
+
+        projects=sections[3]
+        project_one, project_one_detail=labelled_parts(projects, "Project 1", ("Repository", "Project 2"))
+        repo_one_match=re.search(r"(?ims)^\s*Repository\s*:\s*(https?://\S+)", projects)
+        repo_one=repo_one_match.group(1).strip() if repo_one_match else ""
+        project_two, project_two_detail=labelled_parts(projects, "Project 2", ("Repository",))
+        repo_matches=re.findall(r"(?ims)^\s*Repository\s*:\s*(https?://\S+)", projects)
+        repo_two=repo_matches[-1].strip() if len(repo_matches) >= 2 else ""
+
+        focus=sections[4]
+        steps=[]
+        for number, text in re.findall(r"(?ims)^\s*([123])\.\s*(.+?)(?=^\s*[123]\.\s*|\Z)", focus):
+            lines=[" ".join(item.split()) for item in text.splitlines() if item.strip()]
+            if lines:
+                steps.append((lines[0], " ".join(lines[1:])))
+        connect=sections[5]
+        github=line(connect, "GitHub")
+        linkedin=line(connect, "LinkedIn")
+        email=line(connect, "Email")
+        phone=line(connect, "Phone")
+        close_match=re.search(r"(?ims)^\s*Close\s+with\s*:\s*(.+?)\s*$", connect)
+        close=" ".join(close_match.group(1).split()).strip() if close_match else ""
+
+        # Avoid producing a partial "protected" deck for a coincidental
+        # five-slide prompt.  The generic contract parser remains the fallback.
+        if not all((title, subtitle, len(tags) >= 3, problem, solution, outcome,
+                    featured_repo, project_one, repo_one, project_two, repo_two,
+                    len(steps) == 3, github, linkedin, email, phone, close)):
+            return None
+
+        return PresentationBrief(
+            deck_title=f"{title} Portfolio",
+            requested_slide_count=5,
+            slides=[
+                BriefSlide(
+                    slide_number=1, title=title, subtitle=subtitle, purpose=subtitle,
+                    layout_type=LayoutType.title_slide,
+                    elements=[SlideElement(type="tag", heading=tag) for tag in tags[:3]],
+                    exact_element_count=3, portfolio_contract=True,
+                    content_instruction="Render only the supplied name, value proposition, and capability tags. Do not add biography claims, metrics, or an image claim.",
+                ),
+                BriefSlide(
+                    slide_number=2, title=featured_title, purpose="Selected project case study.",
+                    layout_type=LayoutType.feature_grid,
+                    elements=[
+                        SlideElement(type="card", heading="Problem", body=problem),
+                        SlideElement(type="card", heading="Solution", body=solution),
+                        SlideElement(type="card", heading="Outcome", body=outcome),
+                        SlideElement(type="link", heading="Repository", body=featured_repo),
+                    ], exact_element_count=4, portfolio_contract=True,
+                    content_instruction="Keep the supplied SlideWeaver problem, solution, outcome, and repository link exactly as editable copy. Do not invent product features or results.",
+                ),
+                BriefSlide(
+                    slide_number=3, title="Technical Projects", purpose="Selected technical projects and repositories.",
+                    layout_type=LayoutType.feature_grid,
+                    elements=[
+                        SlideElement(type="card", heading=project_one, body=f"{project_one_detail}\n{repo_one}"),
+                        SlideElement(type="card", heading=project_two, body=f"{project_two_detail}\n{repo_two}"),
+                    ], exact_element_count=2, portfolio_contract=True,
+                    content_instruction="Keep the supplied project names, descriptions, technologies, and repository links exactly. Do not infer roles, outcomes, or capabilities.",
+                ),
+                BriefSlide(
+                    slide_number=4, title="Engineering Focus", purpose="The supplied engineering workflow.",
+                    layout_type=LayoutType.step_workflow,
+                    elements=[SlideElement(type="step", heading=heading, body=body) for heading, body in steps],
+                    exact_element_count=3, portfolio_contract=True,
+                    content_instruction="Render the three supplied workflow stages and their copy exactly. Do not replace them with generic engineering topics.",
+                ),
+                BriefSlide(
+                    slide_number=5, title="Let’s Connect", subtitle=close, purpose=close,
+                    layout_type=LayoutType.feature_grid,
+                    elements=[
+                        SlideElement(type="link", heading="GitHub", body=github),
+                        SlideElement(type="link", heading="LinkedIn", body=linkedin),
+                        SlideElement(type="contact", heading="Email", body=email),
+                        SlideElement(type="contact", heading="Phone", body=phone),
+                    ], exact_element_count=4, portfolio_contract=True,
+                    content_instruction="Render the supplied profile links, editable contact placeholders, and closing line only. Do not add direct-contact or profile claims.",
+                ),
+            ],
+        )
+
     def interpret(self, prompt: str, requested_count: int) -> PresentationBrief:
         if self.classify(prompt).mode != "structured":
             return PresentationBrief()
@@ -1107,6 +1324,9 @@ USER BRIEF:\n{bounded_prompt}''',
             if slides:
                 return PresentationBrief(slides=slides, deck_title=payload.get("title"))
         normalized=self._normalize_markdown(prompt)
+        source_fidelity=source_fidelity_requested(normalized)
+        if portfolio:=self._source_fidelity_five_slide_portfolio_brief(normalized):
+            return portfolio
         if portfolio:=self._portfolio_brief(normalized):
             return portfolio
         if portfolio:=self._contact_first_portfolio_brief(normalized, requested_count):
@@ -1125,7 +1345,11 @@ USER BRIEF:\n{bounded_prompt}''',
             if number < 1 or number > 10:
                 continue
             section=normalized[match.end():sections[index+1].start() if index+1 < len(sections) else len(normalized)]
-            section_label=section.strip().split(".", 1)[0].strip()
+            # The first line is the slide's human title.  Splitting on a
+            # period lets a following ``Layout:`` instruction become visible
+            # copy whenever a title has no period of its own.
+            section_lines=[line.strip() for line in section.splitlines() if line.strip()]
+            section_label=(section_lines[0] if section_lines else f"Slide {number}").rstrip(". ")
             layout_text=(self._lines_after(section, "Layout") or [section_label])[0].lower()
             layout=next((value for phrase, value in _LAYOUTS.items() if phrase in layout_text), LayoutType.feature_grid)
             explicit_title=re.search(r"\b(?:main\s+)?title\s*(?:must\s+be(?:\s+a\s+long\s+phrase)?\s*)?\:\s*[\"“]([^\"”]+)[\"”]", section, re.I | re.S)
@@ -1140,6 +1364,12 @@ USER BRIEF:\n{bounded_prompt}''',
                 requirements.extend(self._lines_after(section, marker))
             details=self._structured_slide_details(section, number)
             requirements=details["requirements"] or requirements
+            source_elements=[]
+            # Explicit source-grounded decks must never be filled with a
+            # model's new claims merely because the author used prose instead
+            # of one of the handful of recognised data labels.
+            if source_fidelity and not details["elements"] and not details["table_data"]:
+                source_elements=self._source_fidelity_elements(title, section)
             # A table is semantically a comparison, even when the user calls
             # it a markdown table.  The native renderer checks table_data
             # first and therefore never turns it into generic comparison rows.
@@ -1157,9 +1387,10 @@ USER BRIEF:\n{bounded_prompt}''',
                 layout=LayoutType.step_workflow
             slides.append(BriefSlide(
                 slide_number=number, title=title, subtitle=subtitle_values[0] if subtitle_values else None,
-                layout_type=layout, requirements=requirements, elements=details["elements"],
+                layout_type=layout, requirements=requirements, elements=details["elements"] or source_elements,
                 table_data=details["table_data"], exact_element_count=details["exact_element_count"],
                 content_instruction=details["content_instruction"], contact_matrix=details["contact_matrix"], nested_bullets=details["nested_bullets"], variable_rows=details["variable_rows"], visual_instruction=visual_instruction,
+                source_fidelity_contract=source_fidelity, source_material=section.strip() if source_fidelity else None,
             ))
         if slides:
             return PresentationBrief(slides=slides, deck_title=declared_deck_title)
@@ -1167,6 +1398,19 @@ USER BRIEF:\n{bounded_prompt}''',
         prose_lines=self._prose_slide_lines(normalized)
         if prose_lines:
             prose_slides=[self._prose_slide(number, line, declared_deck_title) for number, line in enumerate(prose_lines[:10], start=1)]
+            if source_fidelity:
+                for slide, source_line in zip(prose_slides, prose_lines):
+                    # The prose interpreter has useful deterministic layout
+                    # recognition, but its ordinary fallbacks include generic
+                    # explanatory copy. Source-fidelity mode replaces that
+                    # copy with the author's own clauses while retaining a
+                    # native table when the author supplied one.
+                    authored=self._source_fidelity_elements(slide.title, source_line)
+                    if authored and not slide.table_data:
+                        slide.elements=authored
+                        slide.exact_element_count=len(authored)
+                    slide.source_fidelity_contract=True
+                    slide.source_material=source_line
             return PresentationBrief(slides=prose_slides, deck_title=declared_deck_title, requested_slide_count=len(prose_slides))
 
         # Some strong briefs describe a sequence in prose rather than naming

@@ -200,5 +200,6 @@ class PresentationQAAgent:
                     echoes={(element.heading or "").strip().casefold(), str(element.value).strip().casefold()}
                     if body and body in echoes:
                         element.body=""
-        spec.title=summarize_point(spec.title,8)
+        if not spec.metadata.get("source_fidelity"):
+            spec.title=summarize_point(spec.title,8)
         return {"passed":True,"score":100 if not issues else 92,"issues":issues,"policy":"Complete decision-relevant sentences replace clipped copy."}

@@ -45,7 +45,7 @@ class SlideContentAgent:
             # IDs, headings, and the user's seed detail are authoritative;
             # the cloud agent may improve the explanatory copy only.
             merged=element.model_dump()
-            if getattr(directive, "portfolio_contract", False):
+            if getattr(directive, "portfolio_contract", False) or getattr(directive, "source_fidelity_contract", False):
                 # Portfolio case-study statements are user-authored claims.
                 # A provider may improve visual composition, but must never
                 # turn them into unverified results or generic process copy.
@@ -211,6 +211,7 @@ Table data supplied by the user: {directive.table_data or "none"}
 Required number of visible elements: {directive.exact_element_count or "normal"}
 Additional rendering contract: {directive.content_instruction or "none"}
 Requested visual direction: {directive.visual_instruction or "none"}
+Source material for this slide (authoritative; do not add facts): {directive.source_material or "none"}
 ''' if directive else "")
             prose_contract=(f'''This is a non-negotiable prose constraint for this slide. Meet it without exposing this instruction in visible text.
 Required layout: {constraint.layout_type.value if constraint and constraint.layout_type else "model choice"}

@@ -953,3 +953,103 @@ Linked In profile: https://www.linkedin.com/in/ajay-kompalwad-ab3b29212/'''
     assert [(item.heading, item.body) for item in brief.slides[2].elements] == [
         ("Phone", "8668460490"), ("Email", "ajay@example.com"),
     ]
+
+def test_source_fidelity_five_slide_portfolio_keeps_authored_projects_and_contacts():
+    prompt='''Create a polished 5-slide personal portfolio presentation for Ajay Kompalwad.
+Source fidelity: use only the supplied content. Preserve project names, technologies, links, and meaning.
+Slide 1: Cover
+Title: Ajay Kompalwad
+Subtitle: Building practical AI products and automation tools
+Include three capability tags:
+AI Product Engineering
+Automation Workflows
+Editable Presentation Systems
+Slide 2: Featured Project — SlideWeaver
+Layout: Three-part case-study grid.
+Problem:
+Creating polished, editable PowerPoint presentations is repetitive and hard to iterate on.
+Solution:
+SlideWeaver creates editable PowerPoint decks using structured planning, native diagrams, charts, shapes, live preview, and protected handling of sensitive data.
+Outcome:
+Users can turn detailed prompts into editable presentation decks while retaining control over content, structure, and later edits.
+Include the repository link:
+https://github.com/Akompalwad/ppt_builder
+Slide 3: Technical Projects
+Layout: Feature grid with 2 items.
+Project 1: Face Mask Detector
+Built with TensorFlow, Keras, and OpenCV.
+Repository:
+https://github.com/Akompalwad/Face-Mask-Detector
+Project 2: Java DBMS Music Player
+A Java-based music-player project.
+Repository:
+https://github.com/Akompalwad/Java_DBMS_Music_Player
+Slide 4: Engineering Focus
+Layout: Clean horizontal workflow with three stages.
+1. Understand the workflow
+Start with the real user task and define the required output clearly.
+2. Build reliable systems
+Use practical engineering, structured workflows, and editable outputs.
+3. Improve through feedback
+Use visual review and user feedback to refine the product experience.
+Slide 5: Connect
+Title: Let’s Connect
+GitHub:
+https://github.com/Akompalwad
+LinkedIn:
+https://www.linkedin.com/in/ajay-kompalwad-ab3b29212/
+Email:
+[replace with your real email address]
+Phone:
+[replace with your preferred contact number]
+Close with:
+Open to collaborating on AI-enabled products, automation, and platform engineering.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=5)
+    assert [(slide.title, slide.layout_type) for slide in brief.slides] == [
+        ("Ajay Kompalwad", LayoutType.title_slide),
+        ("Featured Project — SlideWeaver", LayoutType.feature_grid),
+        ("Technical Projects", LayoutType.feature_grid),
+        ("Engineering Focus", LayoutType.step_workflow),
+        ("Let’s Connect", LayoutType.feature_grid),
+    ]
+    assert [item.heading for item in brief.slides[1].elements] == ["Problem", "Solution", "Outcome", "Repository"]
+    assert brief.slides[2].elements[0].heading == "Face Mask Detector"
+    assert "TensorFlow, Keras, and OpenCV" in brief.slides[2].elements[0].body
+    assert [item.heading for item in brief.slides[3].elements] == ["Understand the workflow", "Build reliable systems", "Improve through feedback"]
+    assert brief.slides[4].elements[2].body == "[replace with your real email address]"
+    assert all(slide.portfolio_contract for slide in brief.slides)
+
+def test_source_fidelity_applies_to_any_numbered_deck_not_just_portfolios():
+    prompt='''Create a 4-slide presentation. Source fidelity: use only the provided content; preserve facts and meaning.
+Slide 1: Market context
+Northwind Logistics operates across APAC, EMEA, and the Americas.
+Slide 2: Core issue
+The company has single-source dependencies, opaque tier-2 supplier visibility, and high inventory carrying costs.
+Slide 3: Response flow
+ERP integration → real-time telemetry ingestion → supply graph → warehouse execution APIs.
+Slide 4: Next step
+Run a regional dependency audit before selecting secondary suppliers.
+Use native editable PowerPoint shapes and text boxes.'''
+    brief=BriefInterpreterAgent().interpret(prompt, requested_count=4)
+    assert len(brief.slides) == 4
+    assert all(slide.source_fidelity_contract for slide in brief.slides)
+    assert "APAC, EMEA, and the Americas" in brief.slides[0].elements[0].body
+    assert "single-source dependencies" in brief.slides[1].elements[0].body
+    assert [item.heading for item in brief.slides[2].elements] == [
+        "ERP integration", "real-time telemetry ingestion", "supply graph", "warehouse execution APIs",
+    ]
+    assert "regional dependency audit" in brief.slides[3].elements[0].body
+
+def test_qa_does_not_shorten_source_fidelity_deck_title():
+    spec=PresentationSpec(
+        title="Northwind Logistics: Regional Dependency Audit and Secondary Supplier Strategy",
+        topic="Northwind", metadata={"source_fidelity": True},
+        slides=[SlideSpec(
+            slide_number=1, title="Market context", purpose="Northwind Logistics operates across APAC, EMEA, and the Americas.",
+            layout_type=LayoutType.feature_grid,
+            visual_spec={"source_fidelity": True},
+            elements=[SlideElement(heading="Market context", body="Northwind Logistics operates across APAC, EMEA, and the Americas.")],
+        )],
+    )
+    PresentationQAAgent().validate_and_recompose(spec)
+    assert spec.title == "Northwind Logistics: Regional Dependency Audit and Secondary Supplier Strategy"
