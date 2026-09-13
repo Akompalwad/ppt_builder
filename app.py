@@ -796,14 +796,20 @@ with st.sidebar:
     with st.container(key="sidebar-action-rail", gap=6):
         if history is not None:
             if st.button(f"📚  My presentations ({len(completed)})", use_container_width=True):
+                st.session_state.show_admin_activity=False
                 st.session_state.show_presentation_library=True
         else:
             st.button("📚  My presentations", use_container_width=True, disabled=True)
         if st.button("✦  Share feedback", use_container_width=True):
+            st.session_state.show_presentation_library=False
+            st.session_state.show_admin_activity=False
             share_feedback()
         if auth_info.get("is_admin") and st.button("◈  Admin activity", use_container_width=True):
+            st.session_state.show_presentation_library=False
             st.session_state.show_admin_activity=True
         if st.button("ⓘ  About SlideWeaver", use_container_width=True):
+            st.session_state.show_presentation_library=False
+            st.session_state.show_admin_activity=False
             about_slideweaver()
 
 # Dialog contents are re-invoked after a Streamlit rerun while their state is
@@ -811,7 +817,7 @@ with st.sidebar:
 # of closing it as the surrounding page redraws.
 if st.session_state.get("show_presentation_library") and history is not None:
     presentation_library(history)
-if st.session_state.get("show_admin_activity") and auth_info.get("is_admin"):
+elif st.session_state.get("show_admin_activity") and auth_info.get("is_admin"):
     admin_activity()
 topic=st.text_area("Describe the presentation you want to create",placeholder="e.g. A board-ready AI-agent strategy", key="topic_input")
 missing_generation_inputs=[]
